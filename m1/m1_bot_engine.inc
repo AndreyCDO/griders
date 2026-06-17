@@ -330,6 +330,117 @@ std::string mexc_order_body(const PlannedOrder& order, const ContractSpec& spec)
     return body.str();
 }
 
+void unregister_active_run_for_deal(const Deal& deal) {
+    std::lock_guard<std::mutex> lock(g_active_runs_mutex);
+    std::vector<ActiveRun> runs = load_active_runs_unlocked();
+    std::string strategy = deal.strategy;
+    std::transform(strategy.begin(), strategy.end(), strategy.begin(), [](unsigned char c) { return std::tolower(c); });
+    runs.erase(std::remove_if(runs.begin(), runs.end(), [&](const ActiveRun& run) {
+        std::string run_strategy = run.strategy;
+        std::transform(run_strategy.begin(), run_strategy.end(), run_strategy.begin(), [](unsigned char c) { return std::tolower(c); });
+        return run.bot_id == deal.bot_id && normalize_symbol(run.symbol) == normalize_symbol(deal.symbol) && run_strategy == strategy;
+    }), runs.end());
+    save_active_runs_unlocked(runs);
+}
+
+std::string position_object_for_deal(const std::string& positions_json, const Deal& deal) {
+    std::string strategy = deal.strategy;
+    std::transform(strategy.begin(), strategy.end(), strategy.begin(), [](unsigned char c) { return std::tolower(c); });
+    int expected_type = strategy == "short" ? 2 : 1;
+    for (const std::string& object : flat_json_objects(positions_json)) {
+        if (json_field(object, "symbol") != normalize_symbol(deal.symbol)) continue;
+        if (json_int_field(object, "positionType", 0) != expected_type) continue;
+        if (json_double_field(object, "holdVol", 0.0) <= 0) continue;
+        return object;
+    }
+    return "";
+}
+
+std::string append_manual_deal_order(const Deal& deal, const std::string& label, const std::string& body, const std::string& response, bool ok, double vol = 0.0, int side = 0, int type = 0) {
+    DealOrder order;
+    order.deal_id = deal.deal_id;
+    order.label = label;
+    order.symbol = normalize_symbol(deal.symbol);
+    order.side = side;
+    order.type = type;
+    order.open_type = deal.open_type;
+    order.leverage = deal.leverage;
+    order.vol = vol;
+    order.status = ok ? "placed" : "failed";
+    order.exchange_order_id = exchange_order_id_from_response(response);
+    order.request_json = body;
+    order.response_json = response.substr(0, 1200);
+    order.created_at = now_ms();
+    order.updated_at = order.created_at;
+    std::vector<DealOrder> orders = load_deal_orders();
+    orders.push_back(order);
+    save_deal_orders(orders);
+    return response;
+}
+
+std::string release_deal(const std::string& deal_id) {
+    std::vector<Deal> deals = load_deals();
+    auto it = std::find_if(deals.begin(), deals.end(), [&](const Deal& deal) { return deal.deal_id == deal_id; });
+    if (it == deals.end()) return "{\"ok\":false,\"error\":\"deal not found\"}";
+    Deal deal = *it;
+    unregister_active_run_for_deal(deal);
+    deal.status = "released";
+    deal.updated_at = now_ms();
+    upsert_deal(deal);
+    append_bot_log("deal " + deal.deal_id + " released from bot management");
+    return "{\"ok\":true,\"status\":\"released\",\"dealId\":\"" + json_escape(deal.deal_id) + "\"}";
+}
+
+std::string force_close_deal(const std::string& deal_id) {
+    std::vector<Deal> deals = load_deals();
+    auto it = std::find_if(deals.begin(), deals.end(), [&](const Deal& deal) { return deal.deal_id == deal_id; });
+    if (it == deals.end()) return "{\"ok\":false,\"error\":\"deal not found\"}";
+    Deal deal = *it;
+    MexcConnection conn = load_connection();
+    if (conn.api_key.empty() || conn.api_secret.empty()) return "{\"ok\":false,\"error\":\"MEXC API key/secret not configured\"}";
+
+    std::string symbol = normalize_symbol(deal.symbol);
+    std::string cancel_body = "{\"symbol\":\"" + symbol + "\"}";
+    std::string cancel_orders = mexc_post_private(conn, "/api/v1/private/order/cancel_all", cancel_body);
+    std::string cancel_plan = mexc_post_private(conn, "/api/v1/private/planorder/cancel_all", cancel_body);
+    std::string cancel_stop = mexc_post_private(conn, "/api/v1/private/stoporder/cancel_all", cancel_body);
+    append_bot_log("deal " + deal.deal_id + " force cancel symbol=" + symbol + " orders=" + cancel_orders.substr(0, 300) + " plan=" + cancel_plan.substr(0, 300) + " stop=" + cancel_stop.substr(0, 300));
+
+    std::string positions = mexc_get_private(conn, "/api/v1/private/position/open_positions");
+    std::string position = position_object_for_deal(positions, deal);
+    if (position.empty()) {
+        unregister_active_run_for_deal(deal);
+        deal.status = "closed_no_position";
+        deal.updated_at = now_ms();
+        upsert_deal(deal);
+        return "{\"ok\":true,\"status\":\"closed_no_position\",\"dealId\":\"" + json_escape(deal.deal_id) + "\"}";
+    }
+
+    double hold_vol = json_double_field(position, "holdVol", 0.0);
+    std::string strategy = deal.strategy;
+    std::transform(strategy.begin(), strategy.end(), strategy.begin(), [](unsigned char c) { return std::tolower(c); });
+    int close_side = strategy == "short" ? 2 : 4;
+    std::ostringstream body;
+    body << "{\"symbol\":\"" << symbol << "\",\"price\":0,\"vol\":" << format_number(hold_vol, 0)
+         << ",\"side\":" << close_side << ",\"type\":5,\"openType\":" << deal.open_type
+         << ",\"leverage\":" << deal.leverage << "}";
+    std::string close_response = mexc_post_private(conn, "/api/v1/private/order/create", body.str());
+    bool ok = mexc_response_success(close_response);
+    append_manual_deal_order(deal, "force close market", body.str(), close_response, ok, hold_vol, close_side, 5);
+    if (ok) {
+        unregister_active_run_for_deal(deal);
+        deal.status = "force_closed";
+    } else {
+        deal.status = "force_close_failed";
+    }
+    deal.updated_at = now_ms();
+    upsert_deal(deal);
+
+    std::ostringstream result;
+    result << "{\"ok\":" << (ok ? "true" : "false") << ",\"status\":\"" << deal.status << "\",\"dealId\":\"" << json_escape(deal.deal_id) << "\",\"response\":\"" << json_escape(close_response.substr(0, 800)) << "\"}";
+    return result.str();
+}
+
 void append_bot_log(const std::string& text) {
     ensure_data_dir();
     std::ofstream out(data_dir() + "/bot_events.log", std::ios::app);

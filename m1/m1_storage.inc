@@ -402,6 +402,21 @@ void upsert_deal(const Deal& deal) {
     save_deals(deals);
 }
 
+bool update_deal_status(const std::string& deal_id, const std::string& status) {
+    std::vector<Deal> deals = load_deals();
+    bool changed = false;
+    for (auto& deal : deals) {
+        if (deal.deal_id == deal_id) {
+            deal.status = status;
+            deal.updated_at = now_ms();
+            changed = true;
+            break;
+        }
+    }
+    if (changed) save_deals(deals);
+    return changed;
+}
+
 void append_deal_order(const Deal& deal, const PlannedOrder& planned, const std::string& request, const std::string& response, bool ok) {
     long long created = now_ms();
     DealOrder order;

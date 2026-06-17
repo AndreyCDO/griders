@@ -189,6 +189,7 @@ std::string json_escape(const std::string& value);
 std::string bot_to_json(const BotConfig& bot);
 std::string json_field(const std::string& object, const std::string& key);
 std::string json_object_field(const std::string& object, const std::string& key);
+bool mexc_response_success(const std::string& response);
 void append_bot_log(const std::string& text);
 
 std::mutex g_active_runs_mutex;

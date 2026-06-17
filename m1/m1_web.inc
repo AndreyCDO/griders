@@ -338,6 +338,13 @@ std::string deals_page(const std::string& flash = "") {
         body << "<p class=\"small\">Mark price: " << format_number(deal.mark_price, 6) << " · Leverage: x" << deal.leverage << " · Open type: " << deal.open_type;
         if (failed_count > 0) body << " · Failed orders: " << failed_count;
         body << "</p>";
+        bool can_manage = deal.live && deal.status != "released" && deal.status != "force_closed" && deal.status != "closed_no_position" && deal.status != "failed";
+        if (can_manage) {
+            body << "<div style=\"display:flex;gap:10px;flex-wrap:wrap;margin:12px 0\">";
+            body << "<form method=\"post\" action=\"/deals/release\"><input type=\"hidden\" name=\"deal_id\" value=\"" << html_escape(deal.deal_id) << "\"><button class=\"button secondary\" type=\"submit\">Release</button></form>";
+            body << "<form method=\"post\" action=\"/deals/force-close\"><input type=\"hidden\" name=\"deal_id\" value=\"" << html_escape(deal.deal_id) << "\"><button class=\"button\" type=\"submit\">Force close</button></form>";
+            body << "</div>";
+        }
         body << "<details open><summary>Orders</summary><div class=\"detail-body\">" << render_deal_orders_table(orders, deal.deal_id) << "</div></details>";
         body << "<details><summary>Config snapshot</summary><div class=\"detail-body\"><pre class=\"raw\">" << html_escape(deal.config_json) << "</pre></div></details>";
         body << "</section>";
@@ -569,7 +576,7 @@ void handle_client(int fd) {
         return;
     }
 
-    if (route_path == "/" || route_path == "/bots" || route_path == "/deals" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
+    if (route_path == "/" || route_path == "/bots" || route_path == "/deals" || route_path == "/deals/release" || route_path == "/deals/force-close" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
         std::string out;
         if (!is_authenticated(headers)) {
             out = response(401, "MEXC M1 admin access required\n", "text/plain; charset=utf-8", {"WWW-Authenticate: Basic realm=\"MEXC M1\""});
@@ -581,6 +588,15 @@ void handle_client(int fd) {
             out = response(200, account_page());
         } else if (method == "GET" && route_path == "/deals") {
             out = response(200, deals_page());
+        } else if (method == "POST" && route_path == "/deals/release") {
+            auto fields = parse_form(body);
+            std::string result = release_deal(fields["deal_id"]);
+            out = response(200, deals_page("<div class=\"flash\">Release result: " + html_escape(result) + "</div>"));
+        } else if (method == "POST" && route_path == "/deals/force-close") {
+            auto fields = parse_form(body);
+            std::string result = force_close_deal(fields["deal_id"]);
+            bool ok = result.find("\"ok\":true") != std::string::npos;
+            out = response(200, deals_page(std::string("<div class=\"flash ") + (ok ? "" : "warn") + "\">Force close result: " + html_escape(result) + "</div>"));
         } else if (method == "GET" && route_path == "/bots/new") {
             out = response(200, bot_form_page(BotConfig{}));
         } else if (method == "GET" && (route_path == "/bots/view" || route_path == "/bots/edit")) {
