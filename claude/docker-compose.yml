@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  cryptorg-trader:
+    build: .
+    container_name: cryptorg-mcp-trader
+    restart: unless-stopped
+
+    # Секреты через .env (не коммить в git!)
+    env_file:
+      - .env
+
+    # Логи сохраняются на хосте
+    volumes:
+      - ./logs:/app/logs
+
+    # stdin/stdout для MCP протокола
+    stdin_open: true
+    tty: false
+
+    # Лимиты ресурсов
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          memory: 64M
+
+    # Логирование Docker
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

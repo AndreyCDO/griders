@@ -1,0 +1,37 @@
+[Unit]
+Description=Cryptorg AI Trader MCP Server (Bybit Liquidity)
+Documentation=https://github.com/your-repo/cryptorg-mcp-trader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cryptorg
+Group=cryptorg
+WorkingDirectory=/opt/cryptorg-trader
+
+# Загружаем переменные окружения из .env
+EnvironmentFile=/opt/cryptorg-trader/.env
+
+# MCP работает через stdio — запускаем напрямую
+ExecStart=/opt/cryptorg-trader/venv/bin/python /opt/cryptorg-trader/server.py
+
+# Перезапуск при падении (через 5 секунд)
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=5
+
+# Логи в systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cryptorg-trader
+
+# Безопасность
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/cryptorg-trader
+
+[Install]
+WantedBy=multi-user.target

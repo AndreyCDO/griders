@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ ui.auth.login_title }} · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <form class="auth-box" method="post" action="/login">
+    <h1>{{ ui.auth.login_title }}</h1>
+    {% if error %}<p class="alert">{{ error }}</p>{% endif %}
+    {% if success %}<p class="alert success">{{ success }}</p>{% endif %}
+    {% if warning %}<p class="alert">{{ warning }}</p>{% endif %}
+    <label>{{ ui.auth.email }}<input name="email" type="email" required autocomplete="email"></label>
+    <label>{{ ui.auth.password }}<input name="password" type="password" required autocomplete="current-password"></label>
+    <button class="button primary full" type="submit">{{ ui.auth.login_button }}</button>
+    <p class="muted"><a href="/password/forgot">{{ ui.auth.forgot_password }}</a></p>
+    <p class="muted">{{ ui.auth.no_account }} <a href="/register">{{ ui.auth.register_link }}</a></p>
+  </form>
+</section>
+{% endblock %}

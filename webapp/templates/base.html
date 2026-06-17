@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("griders_theme");
+        var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var theme = saved || (prefersDark ? "dark" : "light");
+        document.documentElement.dataset.theme = theme;
+      } catch (error) {
+        document.documentElement.dataset.theme = "light";
+      }
+    })();
+  </script>
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="icon" href="/favicon.ico?v=20260601" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon/favicon-32x32.png?v=20260601">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon/favicon-16x16.png?v=20260601">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/favicon/apple-touch-icon.png?v=20260601">
+  <link rel="manifest" href="/site.webmanifest?v=20260601">
+  <meta name="theme-color" content="#0b8f70" id="theme-color-meta">
+  <link rel="stylesheet" href="/static/app.css?v=20260611-backtest-links">
+  <!-- Yandex.Metrika counter -->
+  <script type="text/javascript">
+      (function(m,e,t,r,i,k,a){
+          m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+          m[i].l=1*new Date();
+          for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+          k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+      })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=109528486', 'ym');
+
+      ym(109528486, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+  </script>
+  <!-- /Yandex.Metrika counter -->
+</head>
+<body>
+  <noscript><div><img src="https://mc.yandex.ru/watch/109528486" style="position:absolute; left:-9999px;" alt=""></div></noscript>
+  <header class="topbar">
+    <a class="brand" href="{{ '/dashboard' if user else '/' }}">
+      <span class="brand-mark">G</span>
+      <span>{{ app_name }}</span>
+    </a>
+    {% if user %}
+      <nav class="nav">
+        <a href="/connections">{{ ui.nav.connections }}</a>
+        <a href="/strategies">{{ ui.nav.strategies }}</a>
+        <a href="/signals">{{ ui.nav.signals }}</a>
+        <a href="/monitoring">{{ "Мониторинг" if lang == "ru" else "Monitoring" }}</a>
+        <a href="/tariffs">{{ "Тарифы" if lang == "ru" else "Plans" }}</a>
+        <a href="/docs">{{ ui.nav.docs }}</a>
+        <a href="/profile">{{ "Профиль" if lang == "ru" else "Profile" }}</a>
+      </nav>
+      <div class="top-actions">
+        <div class="lang-switch" aria-label="Language">
+          <a class="{{ 'active' if lang == 'ru' else '' }}" href="/language/ru">RU</a>
+          <a class="{{ 'active' if lang == 'en' else '' }}" href="/language/en">EN</a>
+        </div>
+        <button class="theme-toggle" type="button" data-theme-toggle aria-label="{{ 'Переключить тему' if lang == 'ru' else 'Toggle theme' }}">
+          <span data-theme-icon>☀</span>
+          <span data-theme-label>{{ "Тема" if lang == "ru" else "Theme" }}</span>
+        </button>
+        <form method="post" action="/logout">
+          <button class="icon-text" type="submit">{{ ui.nav.logout }}</button>
+        </form>
+      </div>
+    {% else %}
+      <nav class="nav nav-public">
+        <a href="/tariffs">{{ "Тарифы" if lang == "ru" else "Plans" }}</a>
+        <a href="/docs">{{ ui.nav.docs }}</a>
+        <a href="/login">{{ ui.nav.login }}</a>
+        <a class="nav-cta" href="/register">{{ ui.nav.register }}</a>
+      </nav>
+      <div class="lang-switch" aria-label="Language">
+        <a class="{{ 'active' if lang == 'ru' else '' }}" href="/language/ru">RU</a>
+        <a class="{{ 'active' if lang == 'en' else '' }}" href="/language/en">EN</a>
+      </div>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="{{ 'Переключить тему' if lang == 'ru' else 'Toggle theme' }}">
+        <span data-theme-icon>☀</span>
+        <span data-theme-label>{{ "Тема" if lang == "ru" else "Theme" }}</span>
+      </button>
+    {% endif %}
+  </header>
+
+  <div class="beta-banner-wrap">
+    <div class="beta-banner">Сервис работает в режиме бета тестирования.</div>
+  </div>
+
+  <main class="shell">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-left">
+        <span>GRIDERS.RU &copy; 2026</span>
+        <a href="/terms">{{ "Пользовательское соглашение" if lang == "ru" else "User Agreement" }}</a>
+      </div>
+      <a class="footer-email" href="mailto:support@griders.ru">support@griders.ru</a>
+    </div>
+  </footer>
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var meta = document.getElementById("theme-color-meta");
+      var buttons = document.querySelectorAll("[data-theme-toggle]");
+
+      function applyTheme(theme) {
+        root.dataset.theme = theme;
+        if (meta) {
+          meta.setAttribute("content", theme === "dark" ? "#101820" : "#0b8f70");
+        }
+        buttons.forEach(function (button) {
+          var icon = button.querySelector("[data-theme-icon]");
+          var label = button.querySelector("[data-theme-label]");
+          if (icon) {
+            icon.textContent = theme === "dark" ? "☾" : "☀";
+          }
+          if (label) {
+            label.textContent = theme === "dark"
+              ? "{{ 'Тёмная' if lang == 'ru' else 'Dark' }}"
+              : "{{ 'Светлая' if lang == 'ru' else 'Light' }}";
+          }
+        });
+      }
+
+      buttons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          var next = root.dataset.theme === "dark" ? "light" : "dark";
+          try {
+            localStorage.setItem("griders_theme", next);
+          } catch (error) {}
+          applyTheme(next);
+        });
+      });
+
+      applyTheme(root.dataset.theme || "light");
+    })();
+  </script>
+</body>
+</html>

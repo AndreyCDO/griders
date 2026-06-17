@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}{{ ui.connections.title }} · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="connection-video-link">
+  <a href="/connection-video" target="_blank" rel="noopener noreferrer">
+    {{ "Видео инструкция для подключения" if lang == "ru" else "Video connection guide" }}
+  </a>
+</div>
+
+<section class="page-head">
+  <div>
+    <p class="eyebrow">{{ ui.connections.eyebrow }}</p>
+    <h1>{{ ui.connections.title }}</h1>
+  </div>
+  {% if connection %}
+    <form method="post" action="/connections/test">
+      <input type="hidden" name="connection_id" value="{{ connection.id }}">
+      <button class="button secondary" type="submit">{{ ui.connections.test }}</button>
+    </form>
+  {% endif %}
+</section>
+
+<section class="connection-list">
+  {% if connections %}
+    {% for item in connections %}
+      <a class="connection-card {% if connection and item.id == connection.id %}active{% endif %}" href="/connections?connection_id={{ item.id }}">
+        <strong>{{ item.label }}</strong>
+        <span>{{ item.strategy_name }}</span>
+        <small>{{ item.api_key_masked or ui.common.not_set }}</small>
+      </a>
+    {% endfor %}
+  {% endif %}
+  {% if can_create_connection %}
+    <a class="connection-card add {% if creating_new %}active{% endif %}" href="/connections?new=1">{{ ui.connections.add_new }}</a>
+  {% else %}
+    <div class="connection-card add disabled">
+      <strong>{{ "Лимит подключений" if lang == "ru" else "Connection limit" }}</strong>
+      <span>{{ "Для вашего тарифа доступно только одно подключение." if lang == "ru" else "Your plan allows only one connection." }}</span>
+    </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="section-head">
+    <h2>{{ ui.connections.add_new if creating_new else connection.label }}</h2>
+    {% if connection and can_create_connection %}
+      <a class="button secondary" href="/connections?new=1">{{ ui.connections.add_new }}</a>
+    {% endif %}
+  </div>
+  <form class="form-grid" method="post" action="/connections" autocomplete="off" data-connection-form>
+    <input type="hidden" name="connection_id" value="{{ connection.id if connection else 0 }}">
+    <label>{{ ui.connections.label }}
+      <input name="label" value="{{ connection.label if connection else '' }}" placeholder="{{ ui.common.main_account }}">
+    </label>
+    <label>{{ ui.connections.strategy }}
+      <select name="strategy_code" data-connection-strategy-select data-free-plan="{{ 1 if user_access.is_free else 0 }}">
+        {% for code, meta in strategies.items() %}
+          <option value="{{ code }}" {% if connection and connection.strategy_code == code %}selected{% endif %}>{{ meta.name }}</option>
+        {% endfor %}
+      </select>
+      <small class="field-help plan-limit-note" data-connection-market-warning hidden>{{ "Для бесплатного использования доступна только стратегия GRID DCA." if lang == "ru" else "Only the GRID DCA strategy is available on the free plan." }}</small>
+    </label>
+    <label>{{ ui.connections.api_key }}
+      <input
+        name="bybit_api_key"
+        value="{{ connection.bybit_api_key if connection else '' }}"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        data-lpignore="true"
+        data-1p-ignore="true"
+        data-bwignore="true"
+        data-form-type="other"
+      >
+    </label>
+    <label>{{ ui.connections.api_secret }}
+      <input type="hidden" name="bybit_api_secret" value="" data-api-secret-hidden>
+      <input
+        type="text"
+        class="secret-like-input"
+        placeholder="{{ ui.common.saved_placeholder if connection and connection.has_secret else '' }}"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        data-api-secret-visible
+        data-protected-secret-input
+        data-lpignore="true"
+        data-1p-ignore="true"
+        data-bwignore="true"
+        data-form-type="other"
+        readonly
+      >
+      <small class="field-help">{{ "Автоподстановка паролей для этого поля отключена. Вставьте API секрет вручную." if lang == "ru" else "Password autofill is disabled for this field. Paste the API secret manually." }}</small>
+    </label>
+    <label>{{ ui.connections.webhook }}
+      <input type="hidden" name="webhook_url" value="" data-webhook-hidden>
+      <input
+        type="text"
+        class="secret-like-input"
+        placeholder="{{ ui.common.saved_placeholder if connection and connection.has_webhook else '' }}"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        data-webhook-visible
+        data-protected-secret-input
+        data-lpignore="true"
+        data-1p-ignore="true"
+        data-bwignore="true"
+        data-form-type="other"
+        readonly
+      >
+    </label>
+    <button class="button primary" type="submit">{{ ui.common.save }}</button>
+  </form>
+  {% if success %}
+    <p class="alert success">{{ success }}</p>
+  {% endif %}
+  {% if error %}
+    <p class="alert">{{ error }}</p>
+  {% endif %}
+  {% if connection and connection.last_error %}
+    <p class="alert">{{ connection.last_error }}</p>
+  {% endif %}
+</section>
+<script>
+  const connectionStrategySelect = document.querySelector("[data-connection-strategy-select]");
+  if (connectionStrategySelect) {
+    const syncConnectionPlanWarning = () => {
+      const isFreePlan = connectionStrategySelect.dataset.freePlan === "1";
+      const isMarketShock = ["market_shock_impulse_v1", "market_shock_reversal_dca_v21"].includes(connectionStrategySelect.value);
+      const warning = document.querySelector("[data-connection-market-warning]");
+      connectionStrategySelect.classList.toggle("plan-locked-select", isFreePlan && isMarketShock);
+      if (warning) {
+        warning.hidden = !(isFreePlan && isMarketShock);
+      }
+    };
+    connectionStrategySelect.addEventListener("change", syncConnectionPlanWarning);
+    syncConnectionPlanWarning();
+  }
+  const connectionForm = document.querySelector("[data-connection-form]");
+  if (connectionForm) {
+    const unlockProtectedInput = (input) => {
+      input.removeAttribute("readonly");
+    };
+    connectionForm.querySelectorAll("[data-protected-secret-input]").forEach((input) => {
+      input.addEventListener("pointerdown", () => unlockProtectedInput(input));
+      input.addEventListener("focus", () => unlockProtectedInput(input));
+      input.addEventListener("keydown", () => unlockProtectedInput(input));
+      input.addEventListener("input", () => {
+        input.dataset.userEdited = "1";
+      });
+      input.addEventListener("paste", () => {
+        input.dataset.userEdited = "1";
+      });
+    });
+    connectionForm.addEventListener("submit", () => {
+      const apiSecretVisible = connectionForm.querySelector("[data-api-secret-visible]");
+      const apiSecretHidden = connectionForm.querySelector("[data-api-secret-hidden]");
+      const webhookVisible = connectionForm.querySelector("[data-webhook-visible]");
+      const webhookHidden = connectionForm.querySelector("[data-webhook-hidden]");
+      if (apiSecretVisible && apiSecretHidden) {
+        apiSecretHidden.value = apiSecretVisible.dataset.userEdited === "1" ? apiSecretVisible.value.trim() : "";
+      }
+      if (webhookVisible && webhookHidden) {
+        webhookHidden.value = webhookVisible.dataset.userEdited === "1" ? webhookVisible.value.trim() : "";
+      }
+    });
+  }
+</script>
+{% endblock %}

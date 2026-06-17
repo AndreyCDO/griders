@@ -1,0 +1,434 @@
+{% extends "base.html" %}
+{% block title %}{{ "Профиль" if lang == "ru" else "Profile" }} · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">{{ "Аккаунт" if lang == "ru" else "Account" }}</p>
+    <h1>{{ "Профиль пользователя" if lang == "ru" else "User profile" }}</h1>
+  </div>
+</div>
+
+{% if error %}<p class="alert">{{ error }}</p>{% endif %}
+{% if success %}
+  <p class="alert success">
+    {% if success == "profile" %}
+      {{ "Профиль сохранён." if lang == "ru" else "Profile saved." }}
+    {% elif success == "password" %}
+      {{ "Ссылка для смены пароля отправлена на вашу почту." if lang == "ru" else "Password reset link has been sent to your email." }}
+    {% elif success == "password_warning" %}
+      {{ "Запрос на смену пароля создан, но письмо не удалось отправить. Проверьте SMTP-настройки." if lang == "ru" else "Password reset request was created, but the email could not be sent. Check SMTP settings." }}
+    {% elif success == "2fa_pin" %}
+      {{ "Двухфакторная аутентификация по PIN-коду включена." if lang == "ru" else "PIN two-factor authentication is enabled." }}
+    {% elif success == "2fa_totp" %}
+      {{ "Google Authenticator подключён." if lang == "ru" else "Google Authenticator is enabled." }}
+    {% elif success == "2fa_off" %}
+      {{ "Двухфакторная аутентификация отключена." if lang == "ru" else "Two-factor authentication is disabled." }}
+    {% elif success == "totp_start" %}
+      {{ "Отсканируйте QR-код и подтвердите первый код из приложения." if lang == "ru" else "Scan the QR code and confirm the first code from the app." }}
+    {% elif success == "plans" %}
+      {{ "Статусы пользователей сохранены." if lang == "ru" else "User statuses saved." }}
+    {% elif success == "stats_queued" %}
+      {{ "Обновление информации по пользователям запущено в фоне. Таблица будет обновляться постепенно, без нагрузки на сайт." if lang == "ru" else "User information refresh started in the background. The table will update gradually without blocking the site." }}
+    {% elif success == "stats_running" %}
+      {{ "Обновление информации по пользователям уже выполняется. Дождитесь завершения текущего обновления." if lang == "ru" else "User information refresh is already running. Please wait for the current refresh to finish." }}
+    {% elif success == "stats" %}
+      {{ "Информация по пользователям обновлена. PnL пересчитан с даты регистрации каждого пользователя." if lang == "ru" else "User information updated. PnL was recalculated from each user's registration date." }}
+    {% elif success == "tariff_sync" %}
+      {{ "Тариф проверен и обновлён." if lang == "ru" else "Plan checked and updated." }}
+    {% elif success == "telegram" %}
+      {{ "Телеграм аккаунт изменён. Подтвердите его через бота." if lang == "ru" else "Telegram account changed. Verify it through the bot." }}
+    {% endif %}
+  </p>
+{% endif %}
+
+<section class="profile-grid">
+  <div class="panel">
+    <h2>{{ "Данные аккаунта" if lang == "ru" else "Account details" }}</h2>
+    <form class="form-grid" method="post" action="/profile">
+      <label>
+        {{ "Ник" if lang == "ru" else "Nickname" }}
+        <input name="nickname" value="{{ profile_user.nickname or '' }}" maxlength="80" autocomplete="nickname">
+      </label>
+      <label>
+        {{ "Телеграм аккаунт" if lang == "ru" else "Telegram account" }}
+        <input name="telegram_username" value="{{ profile_user.telegram_username or '' }}" maxlength="80" autocomplete="off" placeholder="{{ 'без @' if lang == 'ru' else 'without @' }}">
+        <small class="field-help">{{ "Необходим для подключения платных тарифов." if lang == "ru" else "Required for enabling paid plans." }}</small>
+      </label>
+      <div class="form-wide telegram-profile-box">
+        {% if profile_user.telegram_username %}
+          <div>
+            <span>{{ "Статус Telegram" if lang == "ru" else "Telegram status" }}</span>
+            <strong>
+              {% if profile_user.telegram_user_id %}
+                {{ "Подтверждён" if lang == "ru" else "Verified" }}
+              {% else %}
+                {{ "Не подтверждён" if lang == "ru" else "Not verified" }}
+              {% endif %}
+            </strong>
+          </div>
+          {% if telegram_verify_url and not profile_user.telegram_user_id %}
+            <a class="button secondary" href="{{ telegram_verify_url }}" target="_blank" rel="noopener">
+              {{ "Подтвердить Telegram" if lang == "ru" else "Verify Telegram" }}
+            </a>
+          {% endif %}
+          {% if profile_user.telegram_user_id %}
+            <button class="button secondary" type="submit" formaction="/profile/tariff-sync" formmethod="post">{{ "Проверить тариф" if lang == "ru" else "Check plan" }}</button>
+          {% endif %}
+        {% else %}
+          <p class="form-note">{{ "Укажите Telegram username и нажмите «Сменить телеграм», затем появится ссылка для подтверждения через бота." if lang == "ru" else "Enter your Telegram username and click “Change Telegram”, then a bot verification link will appear." }}</p>
+        {% endif %}
+        <button class="button secondary" type="submit" formaction="/profile/telegram" formmethod="post">{{ "Сменить телеграм" if lang == "ru" else "Change Telegram" }}</button>
+      </div>
+      <label>
+        {{ "Электронная почта" if lang == "ru" else "Email" }}
+        <input name="email" type="email" value="{{ profile_user.email }}" required autocomplete="email">
+      </label>
+      <label class="form-wide">
+        {{ "Часовой пояс" if lang == "ru" else "Time zone" }}
+        <select name="timezone_name">
+          {% for timezone_name in timezone_options %}
+            <option value="{{ timezone_name }}" {% if timezone_name == profile_user.timezone %}selected{% endif %}>{{ timezone_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="form-wide account-meta">
+        <span>{{ "Дата регистрации в Griders" if lang == "ru" else "Griders registration date" }}</span>
+        <strong>{{ profile_user.created_at_display }}</strong>
+      </div>
+      <div class="form-wide account-meta">
+        <span>{{ "Тариф" if lang == "ru" else "Plan" }}</span>
+        <strong>
+          {% if profile_user.role == "admin" %}
+            {{ "Админ" if lang == "ru" else "Admin" }}
+          {% elif profile_user.plan == "start" %}
+            {{ "Старт" if lang == "ru" else "Start" }}
+          {% elif profile_user.plan == "premium" %}
+            {{ "Премиум" if lang == "ru" else "Premium" }}
+          {% else %}
+            {{ "Бесплатный" if lang == "ru" else "Free" }}
+          {% endif %}
+        </strong>
+      </div>
+      <div class="form-actions">
+        <button class="button primary" type="submit">{{ "Сохранить профиль" if lang == "ru" else "Save profile" }}</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>{{ "Пароль" if lang == "ru" else "Password" }}</h2>
+    <p class="muted">{{ "Мы отправим ссылку для смены пароля на текущую почту аккаунта." if lang == "ru" else "We will send a password reset link to the current account email." }}</p>
+    <form method="post" action="/profile/password-reset">
+      <button class="button secondary" type="submit">{{ "Отправить запрос на смену пароля" if lang == "ru" else "Send password change request" }}</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="section-head">
+    <div>
+      <h2>{{ "Двухфакторная аутентификация" if lang == "ru" else "Two-factor authentication" }}</h2>
+      <p class="muted">
+        {% if profile_user.twofa_method == "pin" %}
+          {{ "Сейчас включён вход по PIN-коду." if lang == "ru" else "PIN confirmation is currently enabled." }}
+        {% elif profile_user.twofa_method == "totp" %}
+          {{ "Сейчас включён Google Authenticator." if lang == "ru" else "Google Authenticator is currently enabled." }}
+        {% else %}
+          {{ "Сейчас 2FA отключена. Можно выбрать PIN-код или Google Authenticator." if lang == "ru" else "2FA is disabled. You can choose PIN or Google Authenticator." }}
+        {% endif %}
+      </p>
+    </div>
+    <span class="badge">{{ profile_user.twofa_method|upper }}</span>
+  </div>
+
+  {% if not profile_user.twofa_enabled %}
+  <div class="profile-grid">
+    <div class="security-card">
+      <h3>{{ "PIN-код" if lang == "ru" else "PIN code" }}</h3>
+      <p class="muted">{{ "Простой вариант: при входе после пароля сайт попросит 4-8 цифр." if lang == "ru" else "Simple option: after the password, the site asks for 4-8 digits." }}</p>
+      <form method="post" action="/profile/2fa/pin">
+        {% if profile_user.twofa_enabled %}
+          <label>
+            {{ "Текущий PIN или код 2FA" if lang == "ru" else "Current PIN or 2FA code" }}
+            <input name="current_twofa_code" type="password" inputmode="numeric" autocomplete="one-time-code" required>
+            <small class="field-help">{{ "Нужен для смены текущей двухфакторной защиты." if lang == "ru" else "Required to change the current two-factor protection." }}</small>
+          </label>
+        {% endif %}
+        <label>
+          {{ "Новый PIN" if profile_user.twofa_enabled and lang == "ru" else "New PIN" if profile_user.twofa_enabled else "PIN" }}
+          <input name="pin_code" type="password" inputmode="numeric" minlength="4" maxlength="8" autocomplete="new-password" required>
+        </label>
+        <label>
+          {{ "Повторите PIN" if lang == "ru" else "Repeat PIN" }}
+          <input name="pin_code_confirm" type="password" inputmode="numeric" minlength="4" maxlength="8" autocomplete="new-password" required>
+        </label>
+        <button class="button primary" type="submit">
+          {% if profile_user.twofa_enabled %}
+            {{ "Сменить PIN" if lang == "ru" else "Change PIN" }}
+          {% else %}
+            {{ "Включить PIN" if lang == "ru" else "Enable PIN" }}
+          {% endif %}
+        </button>
+      </form>
+    </div>
+
+    <div class="security-card">
+      <h3>Google Authenticator</h3>
+      <p class="muted">{{ "Более надёжный вариант: приложение генерирует новый 6-значный код каждые 30 секунд." if lang == "ru" else "Stronger option: the app generates a new 6-digit code every 30 seconds." }}</p>
+      {% if totp_setup %}
+        <div class="totp-setup">
+          {% if totp_setup.qr_data %}
+            <img src="{{ totp_setup.qr_data }}" alt="Google Authenticator QR">
+          {% endif %}
+          <div>
+            <span class="muted">{{ "Ключ для ручного ввода" if lang == "ru" else "Manual setup key" }}</span>
+            <code>{{ totp_setup.secret }}</code>
+          </div>
+        </div>
+        <form method="post" action="/profile/2fa/totp/verify">
+          <label>
+            {{ "Код из приложения" if lang == "ru" else "App code" }}
+            <input name="code" inputmode="numeric" autocomplete="one-time-code" required>
+          </label>
+          <button class="button primary" type="submit">{{ "Подтвердить и включить" if lang == "ru" else "Confirm and enable" }}</button>
+        </form>
+      {% else %}
+        <form method="post" action="/profile/2fa/totp/start">
+          {% if profile_user.twofa_enabled %}
+            <label>
+              {{ "Текущий PIN или код 2FA" if lang == "ru" else "Current PIN or 2FA code" }}
+              <input name="current_twofa_code" type="password" inputmode="numeric" autocomplete="one-time-code" required>
+              <small class="field-help">{{ "Нужен для перехода на Google Authenticator." if lang == "ru" else "Required to switch to Google Authenticator." }}</small>
+            </label>
+          {% endif %}
+          <button class="button secondary" type="submit">
+            {% if profile_user.twofa_enabled %}
+              {{ "Сменить на Google Authenticator" if lang == "ru" else "Switch to Google Authenticator" }}
+            {% else %}
+              {{ "Настроить Google Authenticator" if lang == "ru" else "Set up Google Authenticator" }}
+            {% endif %}
+          </button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  {% else %}
+    <form class="disable-2fa" method="post" action="/profile/2fa/disable">
+      <label>
+        {{ "Текущий PIN или код Google Authenticator" if lang == "ru" else "Current PIN or Google Authenticator code" }}
+        <input name="current_twofa_code" type="password" inputmode="numeric" autocomplete="one-time-code" required>
+        <small class="field-help">{{ "Введите действующий код, чтобы отключить 2FA." if lang == "ru" else "Enter the active code to disable 2FA." }}</small>
+      </label>
+      <button class="button danger" type="submit">{{ "Отключить 2FA" if lang == "ru" else "Disable 2FA" }}</button>
+    </form>
+  {% endif %}
+</section>
+
+<section class="panel danger-zone">
+  <div class="section-head">
+    <div>
+      <h2>{{ "Удаление аккаунта" if lang == "ru" else "Delete account" }}</h2>
+      <p class="muted">
+        {% if user_access.is_admin %}
+          {{ "Админский аккаунт защищён от удаления через профиль." if lang == "ru" else "Admin accounts cannot be deleted from the profile." }}
+        {% elif not profile_user.twofa_enabled %}
+          {{ "Для удаления аккаунта сначала включите 2FA." if lang == "ru" else "Enable 2FA before deleting your account." }}
+        {% else %}
+          {{ "Удаление необратимо: будут удалены профиль, подключения, настройки стратегий и связанные данные аккаунта." if lang == "ru" else "Deletion is irreversible: profile, connections, strategy settings and related account data will be deleted." }}
+        {% endif %}
+      </p>
+    </div>
+    <button
+      class="button danger"
+      type="button"
+      data-delete-account-open
+      {% if user_access.is_admin or not profile_user.twofa_enabled %}disabled{% endif %}
+    >
+      {{ "Удалить аккаунт" if lang == "ru" else "Delete account" }}
+    </button>
+  </div>
+</section>
+
+<dialog class="confirm-dialog" data-delete-account-dialog>
+  <form method="post" action="/profile/delete-account">
+    <h2>{{ "Удалить аккаунт?" if lang == "ru" else "Delete account?" }}</h2>
+    <p class="muted">
+      {{ "Это действие нельзя отменить. После удаления аккаунта Griders больше не сможет управлять вашими подключениями и стратегиями." if lang == "ru" else "This action cannot be undone. After deletion, Griders will no longer manage your connections and strategies." }}
+    </p>
+    <label>
+      {{ "Введите код 2FA для подтверждения" if lang == "ru" else "Enter your 2FA code to confirm" }}
+      <input name="twofa_code" inputmode="numeric" autocomplete="one-time-code" required>
+    </label>
+    <div class="form-actions">
+      <button class="button secondary" type="button" data-delete-account-close>{{ "Отмена" if lang == "ru" else "Cancel" }}</button>
+      <button class="button danger" type="submit">{{ "Да, удалить аккаунт" if lang == "ru" else "Yes, delete account" }}</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  const deleteAccountDialog = document.querySelector("[data-delete-account-dialog]");
+  const deleteAccountOpen = document.querySelector("[data-delete-account-open]");
+  const deleteAccountClose = document.querySelector("[data-delete-account-close]");
+  if (deleteAccountDialog && deleteAccountOpen) {
+    deleteAccountOpen.addEventListener("click", () => {
+      if (typeof deleteAccountDialog.showModal === "function") {
+        deleteAccountDialog.showModal();
+      } else {
+        deleteAccountDialog.setAttribute("open", "open");
+      }
+    });
+  }
+  if (deleteAccountDialog && deleteAccountClose) {
+    deleteAccountClose.addEventListener("click", () => {
+      deleteAccountDialog.close();
+    });
+  }
+</script>
+
+{% if user_access.is_admin %}
+<details class="panel admin-users-panel" open>
+  <summary class="admin-users-summary">
+    <div>
+      <h2>{{ "Пользователи" if lang == "ru" else "Users" }}</h2>
+      <p class="muted">{{ "Админ может менять статус обычных пользователей с бесплатного на премиум и обратно." if lang == "ru" else "Admin can switch regular users between free and premium status." }}</p>
+    </div>
+    <span class="button tiny admin-users-toggle">{{ "Свернуть / развернуть" if lang == "ru" else "Collapse / expand" }}</span>
+  </summary>
+  <form method="post" action="/profile/admin/users">
+    <div class="table-wrap">
+      <table class="admin-users-table">
+        <thead>
+          <tr>
+            <th rowspan="2">№</th>
+            <th rowspan="2">e-mail</th>
+            <th rowspan="2">{{ "Ник пользователя" if lang == "ru" else "Nickname" }}</th>
+            <th rowspan="2">{{ "Телеграм" if lang == "ru" else "Telegram" }}</th>
+            <th rowspan="2">{{ "Дата регистрации" if lang == "ru" else "Registration date" }}</th>
+            <th rowspan="2">PnL</th>
+            <th colspan="3">{{ "Статус" if lang == "ru" else "Status" }}</th>
+          </tr>
+          <tr>
+            <th>{{ "Бесплатный" if lang == "ru" else "Free" }}</th>
+            <th>{{ "Старт" if lang == "ru" else "Start" }}</th>
+            <th>{{ "Премиум" if lang == "ru" else "Premium" }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in admin_users %}
+            <tr data-plan-row>
+              <td>{{ loop.index }}</td>
+              <td>
+                <strong class="admin-email {{ account.connection_status_class }}" title="{{ account.connection_status_label }}">{{ account.email }}</strong>
+                {% if account.role == "admin" %}
+                  <span class="badge">{{ "Админ" if lang == "ru" else "Admin" }}</span>
+                {% endif %}
+              </td>
+              <td>{{ account.nickname or "—" }}</td>
+              <td>
+                {% if account.telegram_username %}
+                  @{{ account.telegram_username }}
+                  {% if account.telegram_user_id %}
+                    <span class="badge">{{ "ok" if lang == "ru" else "ok" }}</span>
+                  {% endif %}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>{{ account.created_at_display }}</td>
+              <td><strong class="{{ account.pnl_class }}">{{ account.cumulative_pnl }} USDT</strong></td>
+              <td>
+                <input
+                  type="checkbox"
+                  name="plan_{{ account.id }}"
+                  value="free"
+                  data-plan-choice
+                  {% if account.plan == "free" and account.role != "admin" %}checked{% endif %}
+                  {% if account.role == "admin" %}disabled{% endif %}
+                >
+              </td>
+              <td>
+                <input
+                  type="checkbox"
+                  name="plan_{{ account.id }}"
+                  value="start"
+                  data-plan-choice
+                  {% if account.plan == "start" and account.role != "admin" %}checked{% endif %}
+                  {% if account.role == "admin" %}disabled{% endif %}
+                >
+              </td>
+              <td>
+                <input
+                  type="checkbox"
+                  name="plan_{{ account.id }}"
+                  value="premium"
+                  data-plan-choice
+                  {% if account.plan == "premium" or account.role == "admin" %}checked{% endif %}
+                  {% if account.role == "admin" %}disabled{% endif %}
+                >
+                {% if account.role == "admin" %}
+                  <input type="hidden" name="plan_{{ account.id }}" value="premium">
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="form-actions">
+      <button class="button secondary" type="submit" formaction="/profile/admin/users/refresh" formmethod="post">{{ "Обновить статусы" if lang == "ru" else "Refresh statuses" }}</button>
+      <button class="button primary" type="submit">{{ "Сохранить" if lang == "ru" else "Save" }}</button>
+    </div>
+  </form>
+</details>
+
+<section class="panel admin-site-stats">
+  <h2>{{ "Итоги по сайту" if lang == "ru" else "Site totals" }}</h2>
+  <p class="form-note">{{ "Рассчёт ведётся с 08.06.2026" if lang == "ru" else "Calculated from 08.06.2026" }}</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ "Пользователей" if lang == "ru" else "Users" }}</th>
+          <th>{{ "Сделок" if lang == "ru" else "Deals" }}</th>
+          <th>{{ "Объём" if lang == "ru" else "Volume" }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>{{ admin_site_stats.users_count }}</strong></td>
+          <td><strong>{{ admin_site_stats.deals_count }}</strong></td>
+          <td><strong>{{ admin_site_stats.traded_volume }} USDT</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="form-note">
+    {{ "Отправленные сигналы считаются накопительно. Фактический объём берётся из read-only API по закрытым позициям: он уже включает первые и сработавшие страховочные ордера." if lang == "ru" else "Sent signals are counted cumulatively. Actual volume comes from the read-only API closed positions: it already includes first and triggered safety orders." }}
+  </p>
+</section>
+
+<script>
+  document.querySelectorAll("[data-plan-row]").forEach((row) => {
+    const choices = Array.from(row.querySelectorAll("[data-plan-choice]"));
+    choices.forEach((choice) => {
+      choice.addEventListener("change", () => {
+        if (choice.disabled) {
+          return;
+        }
+        if (choice.checked) {
+          choices.forEach((other) => {
+            if (other !== choice) {
+              other.checked = false;
+            }
+          });
+        } else if (!choices.some((item) => item.checked)) {
+          choice.checked = true;
+        }
+      });
+    });
+  });
+</script>
+{% endif %}
+{% endblock %}

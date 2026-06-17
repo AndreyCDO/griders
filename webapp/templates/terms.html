@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}{{ "Пользовательское соглашение" if lang == "ru" else "User Agreement" }} · {{ app_name }}{% endblock %}
+{% block content %}
+{% if lang == "en" %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Legal</p>
+    <h1>User Agreement</h1>
+    <p class="muted">Last updated: June 6, 2026</p>
+  </div>
+</section>
+
+<section class="panel doc-panel legal-text">
+  <h2>1. Acceptance Of Terms</h2>
+  <p>By registering, logging in, connecting API keys, creating connections, enabling strategies, paying for a plan, linking Telegram, or otherwise using Griders, you confirm that you have read, understood, and accepted this User Agreement.</p>
+  <p>If you do not agree with these terms, do not use the website, do not connect Cryptorg webhooks, and do not enable trading strategies.</p>
+
+  <h2>2. Service Description</h2>
+  <p>Griders is a software interface for configuring trading strategies, receiving market signals, reading account information through user-provided read-only API credentials, and sending user-configured webhook commands to Cryptorg Ghost Bots.</p>
+  <p>Griders is not a cryptocurrency exchange, broker, dealer, investment adviser, portfolio manager, asset manager, custodian, payment service, or financial institution. Griders does not hold user funds and does not execute exchange orders directly. Trading actions are performed through third-party services configured by the user.</p>
+
+  <h2>3. Plans And Paid Access</h2>
+  <p>Griders has Free, Start, and Premium plans. Plan limits, available functions, recommended deposit, maximum first order size, and strategy access are shown on the Plans page and may be updated from time to time.</p>
+  <p>Paid plan access is activated through a Telegram account linked in the user's Profile and verified through the Griders tariff bot. Telegram usernames must be unique. If the Telegram account is changed, verification is reset and the plan may return to Free until the new account is verified.</p>
+  <p>If the verified Telegram account has access to both paid tariff channels, Premium is applied. If no paid subscription can be verified, Free is applied.</p>
+
+  <h2>4. Payments, Subscriptions, Cancellations, And Refunds</h2>
+  <p>Paid subscriptions are processed through Tribute, Telegram, and their payment providers. Griders does not process bank card payments and does not store payment card data.</p>
+  <p>A paid subscription may renew automatically according to the period and price shown in the Tribute payment interface. The user is responsible for cancelling the subscription through Tribute, the Telegram payment flow, <code>@donate</code>, or the relevant app store flow where applicable.</p>
+  <p>If a subscription is cancelled, expires, is not renewed, payment fails, or access to the paid Telegram channel is removed, the Griders plan may automatically return to Free.</p>
+  <p>Refunds, payment disputes, failed payments, recurring payments, trials, discounts, and cancellation procedures are governed by the rules of Tribute, Telegram, and the relevant payment provider. Tribute materials state that payments are generally final and non-refundable, except for cases such as technical payment errors or duplicate charges. Griders does not independently guarantee refunds.</p>
+  <p>Prices, discounts, trial periods, paid plan conditions, and available payment methods may change. The actual offer displayed in the Tribute payment interface at the time of payment applies.</p>
+
+  <h2>5. No Investment Advice</h2>
+  <p>All signals, calculations, strategy descriptions, risk hints, market filters, dashboards, notifications, documentation, and other materials on Griders are provided for informational and technical purposes only.</p>
+  <p>Nothing on Griders is financial, investment, legal, tax, accounting, trading, or other professional advice. Nothing should be interpreted as a recommendation to buy, sell, hold, open, close, increase, decrease, hedge, or otherwise trade any cryptocurrency, derivative, futures contract, token, or other instrument.</p>
+
+  <h2>6. High-Risk Trading Warning</h2>
+  <p>Cryptocurrency trading, futures trading, leveraged trading, automated trading, grid trading, DCA strategies, impulse strategies, and webhook-based trading involve a high level of risk. Prices may move sharply and unpredictably. Liquidity may disappear. Spreads may widen. Slippage, liquidation, stop-loss execution, exchange outages, API failures, webhook delays, and market manipulation may cause losses.</p>
+  <p>You may lose part or all of your deposit. You may also incur losses larger than expected because of leverage, fees, funding, technical failures, execution delays, incorrect settings, or rapid market movement.</p>
+
+  <h2>7. User Responsibility</h2>
+  <p>You are solely and fully responsible for every action performed through your Griders account, including all settings, API keys, webhooks, selected strategies, trading pairs, risk percentage, first order size, leverage, margin type, deal limits, enabled strategy settings, Telegram account, and paid subscription status.</p>
+  <p>You independently decide whether to use any signal or strategy. You are responsible for checking the correctness of all parameters before saving or enabling a strategy. You are responsible for monitoring open positions and for closing, reducing, or managing them when needed.</p>
+
+  <h2>8. No Liability For Trading Results</h2>
+  <p>To the maximum extent permitted by applicable law, Griders, the website owners, creators, developers, administrators, contractors, partners, affiliates, and any related persons are not liable for any trading results, including profit, loss, missed profit, liquidation, drawdown, incorrect entry, incorrect exit, missed signal, duplicate signal, delayed signal, failed webhook, failed API request, exchange error, third-party service failure, payment provider issue, technical failure, data inaccuracy, or user misconfiguration.</p>
+  <p>You understand and agree that you use Griders at your own risk and that all financial consequences of using the website are borne exclusively by you.</p>
+
+  <h2>9. Automatic Trading</h2>
+  <p>If you enable a strategy, you authorize Griders to send trading commands according to the settings saved in your account and the logic of the selected strategy. Automatic execution may open real futures positions through Cryptorg Ghost Bots.</p>
+  <p>You acknowledge that automated systems can behave unexpectedly during volatile markets, network failures, exchange incidents, API changes, software bugs, or incorrect user settings. You are responsible for deciding whether automatic execution is appropriate and for disabling it when necessary.</p>
+
+  <h2>10. API Keys, Webhooks, Telegram, And Third-Party Services</h2>
+  <p>You are responsible for creating, storing, rotating, revoking, and securing your Cryptorg API keys and webhook URLs. You must not provide keys, webhooks, or Telegram accounts that you are not authorized to use.</p>
+  <p>Griders relies on third-party services, including Cryptorg, Bybit liquidity, TradingView, Telegram, Tribute, payment providers, hosting providers, email providers, and market data APIs. Griders does not control these services and is not responsible for their availability, accuracy, rules, fees, limitations, outages, delays, errors, API changes, blocked accounts, changed terms, or any resulting losses.</p>
+
+  <h2>11. Strategies, Signals, And Backtests</h2>
+  <p>Strategies may use market data, indicators, TradingView alerts, Telegram signals, filters, historical values, liquidity checks, and internal rules. These mechanisms are not guaranteed to be accurate, complete, profitable, timely, or suitable for any particular user.</p>
+  <p>Past results, examples, backtests, theoretical calculations, documentation, or interface hints do not guarantee future results. No strategy can eliminate market risk.</p>
+
+  <h2>12. Account Security</h2>
+  <p>You are responsible for protecting your email account, password, PIN, Google Authenticator codes, Telegram account, devices, browser sessions, and any other authentication tools. Enable two-factor authentication when possible.</p>
+  <p>If you suspect unauthorized access, change your password, revoke API keys and webhooks in Cryptorg, review Telegram access, and contact support.</p>
+
+  <h2>13. Availability And Changes</h2>
+  <p>Griders may be updated, changed, suspended, limited, or discontinued at any time. Functions, strategies, filters, supported pairs, thresholds, plan limits, paid plan conditions, and interface elements may change without prior notice.</p>
+  <p>The website may be unavailable because of maintenance, infrastructure failures, third-party outages, attacks, errors, or other reasons. No uninterrupted or error-free operation is guaranteed.</p>
+
+  <h2>14. Prohibited Use</h2>
+  <p>You may not use Griders for illegal activity, unauthorized access, abuse of third-party services, manipulation, fraud, spam, attempts to bypass limits, reverse engineering, interference with the website, or violation of applicable laws, exchange rules, Cryptorg terms, Telegram terms, Tribute terms, or payment provider rules.</p>
+
+  <h2>15. Indemnification</h2>
+  <p>You agree to indemnify and hold harmless Griders, its owners, creators, developers, administrators, contractors, partners, affiliates, and related persons from any claims, losses, damages, liabilities, costs, and expenses arising from your use of the website, your trading activity, your settings, your API keys, your webhooks, your Telegram account, your paid subscription, your violation of this Agreement, or your violation of any law or third-party rights.</p>
+
+  <h2>16. Limitation Of Warranties</h2>
+  <p>Griders is provided on an "as is" and "as available" basis. No warranties are made regarding profitability, suitability, availability, accuracy, reliability, security, compatibility, uninterrupted operation, or fitness for a particular purpose.</p>
+
+  <h2>17. Changes To This Agreement</h2>
+  <p>Griders may update this User Agreement from time to time. Continued use of the website after changes means that you accept the updated terms.</p>
+
+  <h2>18. Support</h2>
+  <p>Support email: <a href="mailto:support@griders.ru">support@griders.ru</a></p>
+</section>
+{% else %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Документы</p>
+    <h1>Пользовательское соглашение</h1>
+    <p class="muted">Дата обновления: 6 июня 2026 года</p>
+  </div>
+</section>
+
+<section class="panel doc-panel legal-text">
+  <h2>1. Принятие условий</h2>
+  <p>Регистрируясь, входя в аккаунт, подключая API ключи, создавая подключения, включая стратегии, оплачивая тариф, привязывая телеграм или иным образом используя Griders, пользователь подтверждает, что прочитал, понял и принимает настоящее Пользовательское соглашение.</p>
+  <p>Если пользователь не согласен с условиями, он обязан не использовать сайт, не подключать webhook Cryptorg и не включать торговые стратегии.</p>
+
+  <h2>2. Описание сервиса</h2>
+  <p>Griders является программным интерфейсом для настройки торговых стратегий, получения рыночных сигналов, чтения информации об аккаунте через предоставленные пользователем read-only API данные и отправки настроенных пользователем webhook-команд в Cryptorg Ghost Bot.</p>
+  <p>Griders не является криптовалютной биржей, брокером, дилером, инвестиционным советником, управляющим активами, платёжным сервисом, финансовой организацией или хранителем средств. Griders не хранит средства пользователей и не исполняет биржевые ордера напрямую. Торговые действия выполняются через сторонние сервисы, настроенные пользователем.</p>
+
+  <h2>3. Тарифы и платный доступ</h2>
+  <p>В Griders есть тарифы Бесплатный, Старт и Премиум. Лимиты тарифов, доступные функции, рекомендуемый депозит, максимальный первый ордер и доступ к стратегиям отображаются на странице Тарифы и могут изменяться.</p>
+  <p>Платный тариф активируется через телеграм аккаунт, указанный в Профиле и подтверждённый через тарифного бота Griders. Телеграм аккаунт должен быть уникальным. При смене телеграм аккаунта подтверждение сбрасывается, а тариф может вернуться на Бесплатный до подтверждения нового аккаунта.</p>
+  <p>Если подтверждённый телеграм аккаунт имеет доступ сразу к двум платным тарифным каналам, применяется тариф Премиум. Если платная подписка не подтверждается, применяется Бесплатный тариф.</p>
+
+  <h2>4. Оплата, подписки, отмена и возвраты</h2>
+  <p>Платные подписки оформляются через Tribute, Telegram и их платёжных провайдеров. Griders не обрабатывает платежи по банковским картам и не хранит данные платёжных карт.</p>
+  <p>Платная подписка может продлеваться автоматически в соответствии с периодом и ценой, указанными в платёжном интерфейсе Tribute. Пользователь самостоятельно отвечает за отмену подписки через Tribute, платёжный сценарий Telegram, <code>@donate</code> или соответствующий магазин приложений, если оплата оформлялась через него.</p>
+  <p>Если подписка отменена, закончилась, не продлена, платёж не прошёл или доступ к платному телеграм каналу удалён, тариф Griders может автоматически вернуться на Бесплатный.</p>
+  <p>Возвраты, платёжные споры, неуспешные платежи, регулярные списания, пробные периоды, скидки и порядок отмены регулируются правилами Tribute, Telegram и соответствующего платёжного провайдера. В материалах Tribute указано, что платежи в общем случае являются окончательными и не подлежат возврату, кроме случаев технической ошибки платежа или двойного списания. Griders не даёт самостоятельной гарантии возврата платежей.</p>
+  <p>Цены, скидки, пробные периоды, условия платных тарифов и доступные способы оплаты могут изменяться. Применяется фактическое предложение, показанное в платёжном интерфейсе Tribute на момент оплаты.</p>
+
+  <h2>5. Отсутствие инвестиционных рекомендаций</h2>
+  <p>Все сигналы, расчёты, описания стратегий, подсказки по риску, рыночные фильтры, панели, уведомления, документация и иные материалы Griders предоставляются исключительно в информационных и технических целях.</p>
+  <p>Никакая информация на сайте не является финансовой, инвестиционной, юридической, налоговой, бухгалтерской, торговой или иной профессиональной консультацией. Ничто на сайте не должно рассматриваться как рекомендация покупать, продавать, удерживать, открывать, закрывать, увеличивать, уменьшать, хеджировать или иным образом торговать криптовалютой, деривативами, фьючерсами, токенами или любыми другими инструментами.</p>
+
+  <h2>6. Предупреждение о высоком риске</h2>
+  <p>Торговля криптовалютой, фьючерсами, инструментами с плечом, автоматическая торговля, сеточные стратегии, DCA-стратегии, импульсные стратегии и торговля через webhook связаны с высоким уровнем риска. Цена может резко и непредсказуемо изменяться. Ликвидность может исчезать. Спред может расширяться. Проскальзывание, ликвидация, исполнение стоп-лосса, сбои биржи, ошибки API, задержки webhook, рыночные манипуляции и технические ошибки могут привести к убыткам.</p>
+  <p>Пользователь может потерять часть или весь депозит. Убытки могут оказаться выше ожидаемых из-за плеча, комиссий, funding, технических сбоев, задержек исполнения, неверных настроек или резкого движения рынка.</p>
+
+  <h2>7. Ответственность пользователя</h2>
+  <p>Пользователь самостоятельно и в полном объёме отвечает за все действия, совершённые через его аккаунт Griders, включая настройки, API ключи, webhook, выбранные стратегии, торговые пары, процент риска, размер первого ордера, плечо, тип маржи, лимиты сделок, включение стратегии, телеграм аккаунт и статус платной подписки.</p>
+  <p>Пользователь самостоятельно принимает решение, использовать ли любой сигнал или стратегию. Пользователь обязан проверять корректность всех параметров перед сохранением или включением стратегии. Пользователь отвечает за мониторинг открытых позиций и за их закрытие, уменьшение или управление при необходимости.</p>
+
+  <h2>8. Отсутствие ответственности за результаты торговли</h2>
+  <p>В максимально допустимой применимым законодательством степени Griders, владельцы сайта, создатели, разработчики, администраторы, подрядчики, партнёры, аффилированные лица и любые связанные лица не несут ответственности за результаты торговли, включая прибыль, убытки, упущенную выгоду, ликвидацию, просадку, неверный вход, неверный выход, пропущенный сигнал, дублирующийся сигнал, задержанный сигнал, неотправленный webhook, ошибку API, ошибку биржи, сбой стороннего сервиса, проблему платёжного провайдера, технический сбой, неточность данных или неверную настройку пользователя.</p>
+  <p>Пользователь понимает и соглашается, что использует Griders на свой риск, а все финансовые последствия использования сайта несёт исключительно пользователь.</p>
+
+  <h2>9. Автоматическая торговля</h2>
+  <p>Если пользователь включает стратегию, он разрешает Griders отправлять торговые команды согласно настройкам, сохранённым в аккаунте, и логике выбранной стратегии. Автоматическое исполнение может открывать реальные фьючерсные позиции через Cryptorg Ghost Bot.</p>
+  <p>Пользователь признаёт, что автоматические системы могут работать непредсказуемо при высокой волатильности, сетевых сбоях, инцидентах на бирже, изменениях API, ошибках программного обеспечения или неверных пользовательских настройках. Пользователь самостоятельно решает, подходит ли ему автоматическое исполнение, и обязан отключать его при необходимости.</p>
+
+  <h2>10. API ключи, webhook, телеграм и сторонние сервисы</h2>
+  <p>Пользователь отвечает за создание, хранение, замену, отзыв и защиту своих API ключей Cryptorg и webhook-ссылок. Пользователь не вправе передавать ключи, webhook или телеграм аккаунты, которыми он не уполномочен пользоваться.</p>
+  <p>Griders зависит от сторонних сервисов, включая Cryptorg, ликвидность Bybit, TradingView, Telegram, Tribute, платёжных провайдеров, хостинг, почтовых провайдеров и API рыночных данных. Griders не контролирует эти сервисы и не отвечает за их доступность, точность, правила, комиссии, ограничения, сбои, задержки, ошибки, изменения API, блокировки аккаунтов, изменение условий или любые убытки, возникшие в связи с ними.</p>
+
+  <h2>11. Стратегии, сигналы и бэктесты</h2>
+  <p>Стратегии могут использовать рыночные данные, индикаторы, сигналы TradingView, Telegram-сообщения, фильтры, исторические значения, проверки ликвидности и внутренние правила. Эти механизмы не гарантируют точность, полноту, прибыльность, своевременность или пригодность для конкретного пользователя.</p>
+  <p>Прошлые результаты, примеры, бэктесты, теоретические расчёты, документация и подсказки в интерфейсе не гарантируют будущих результатов. Ни одна стратегия не устраняет рыночный риск.</p>
+
+  <h2>12. Безопасность аккаунта</h2>
+  <p>Пользователь отвечает за защиту своей электронной почты, пароля, PIN-кода, кодов Google Authenticator, телеграм аккаунта, устройств, браузерных сессий и иных средств доступа. Рекомендуется включить двухфакторную аутентификацию.</p>
+  <p>При подозрении на несанкционированный доступ пользователь должен сменить пароль, отозвать API ключи и webhook в Cryptorg, проверить доступ к телеграм аккаунту и обратиться в поддержку.</p>
+
+  <h2>13. Доступность и изменения сервиса</h2>
+  <p>Griders может обновляться, изменяться, приостанавливаться, ограничиваться или прекращать работу в любое время. Функции, стратегии, фильтры, поддерживаемые пары, пороги, лимиты тарифов, условия платных тарифов и элементы интерфейса могут изменяться без предварительного уведомления.</p>
+  <p>Сайт может быть недоступен из-за обслуживания, инфраструктурных сбоев, проблем сторонних сервисов, атак, ошибок или иных причин. Бесперебойная и безошибочная работа не гарантируется.</p>
+
+  <h2>14. Запрещённое использование</h2>
+  <p>Запрещено использовать Griders для незаконной деятельности, несанкционированного доступа, злоупотребления сторонними сервисами, манипуляций, мошенничества, спама, обхода ограничений, реверс-инжиниринга, вмешательства в работу сайта, а также нарушения применимого законодательства, правил бирж, условий Cryptorg, Telegram, Tribute или платёжных провайдеров.</p>
+
+  <h2>15. Возмещение убытков</h2>
+  <p>Пользователь соглашается возместить и оградить Griders, его владельцев, создателей, разработчиков, администраторов, подрядчиков, партнёров, аффилированных и связанных лиц от любых претензий, убытков, ущерба, ответственности, расходов и издержек, возникших из использования сайта пользователем, его торговой деятельности, настроек, API ключей, webhook, телеграм аккаунта, платной подписки, нарушения настоящего Соглашения, закона или прав третьих лиц.</p>
+
+  <h2>16. Ограничение гарантий</h2>
+  <p>Griders предоставляется на условиях "как есть" и "как доступно". Не предоставляется никаких гарантий прибыльности, пригодности, доступности, точности, надёжности, безопасности, совместимости, бесперебойной работы или соответствия конкретной цели.</p>
+
+  <h2>17. Изменение соглашения</h2>
+  <p>Griders может периодически обновлять настоящее Пользовательское соглашение. Продолжение использования сайта после изменений означает согласие пользователя с обновлёнными условиями.</p>
+
+  <h2>18. Поддержка</h2>
+  <p>Электронная почта поддержки: <a href="mailto:support@griders.ru">support@griders.ru</a></p>
+</section>
+{% endif %}
+{% endblock %}

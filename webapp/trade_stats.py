@@ -1,0 +1,350 @@
+"""Persistent site-wide deal counter based on confirmed Griders webhooks."""
+
+from __future__ import annotations
+
+import json
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from .db import execute, fetch_all, fetch_one
+
+COUNTER_KEY = "site_totals_v2"
+COUNTER_START_DATE = "2026-06-08"
+COUNTER_START_UTC = "2026-06-08 00:00:00"
+TAKER_ROUNDTRIP_FEE_RATE = 0.001
+REPORT_TIMEZONE = ZoneInfo("Europe/Moscow")
+
+
+def site_totals() -> dict:
+    users_row = fetch_one("SELECT COUNT(*) AS users_count FROM ai_users") or {}
+    counter = fetch_one(
+        "SELECT * FROM ai_site_trade_counter WHERE counter_key=%s",
+        (COUNTER_KEY,),
+    ) or {}
+    return {
+        "users_count": int(users_row.get("users_count") or 0),
+        "deals_count": int(counter.get("deals_count") or 0),
+        "traded_volume": _float(counter.get("traded_volume")),
+        "counted_from": counter.get("counted_from") or COUNTER_START_DATE,
+    }
+
+
+def record_sent_webhook(
+    user_id: int,
+    connection_id: int | None,
+    strategy_code: str,
+    pair: str,
+    side: str,
+    order_volume: float | None,
+    leverage: int | None,
+    payload: dict | None = None,
+    signal_id: int | None = None,
+    sent_at: str | None = None,
+) -> None:
+    if side not in {"long", "short"}:
+        return
+    sent_at = sent_at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    if sent_at < COUNTER_START_UTC:
+        return
+    _ensure_counter()
+    plan = _deal_plan(payload or {}, order_volume, leverage)
+    inserted = execute(
+        """
+        INSERT IGNORE INTO ai_site_trade_deals
+        (signal_id, user_id, connection_id, strategy_code, pair, side, status, sent_at,
+         payload, expected_profits, planned_volumes, full_volume, active_safety_orders)
+        VALUES (%s, %s, %s, %s, %s, %s, 'open', %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            signal_id,
+            user_id,
+            connection_id,
+            strategy_code,
+            pair.upper(),
+            side,
+            sent_at,
+            json.dumps(payload or {}, ensure_ascii=False),
+            json.dumps(plan["expected_profits"], ensure_ascii=False),
+            json.dumps(plan["planned_volumes"], ensure_ascii=False),
+            plan["full_volume"],
+            plan["active_safety_orders"],
+        ),
+    )
+    if inserted:
+        execute(
+            """
+            UPDATE ai_site_trade_counter
+            SET deals_count=deals_count+1, updated_at=NOW()
+            WHERE counter_key=%s
+            """,
+            (COUNTER_KEY,),
+        )
+        refresh_daily_site_trade_stats(_local_date_from_utc_string(sent_at))
+
+
+def process_closed_rows_for_counter(user_id: int, connection_id: int | None, closed_rows: list[dict]) -> None:
+    for row in sorted(closed_rows, key=lambda item: int(_float(item.get("updatedTime") or item.get("createdTime")))):
+        pair = str(row.get("symbol") or "").upper()
+        side = _position_side_from_closed_row(row)
+        if not pair or side not in {"long", "short"}:
+            continue
+        closed_ref = _closed_ref(row)
+        if not closed_ref or _closed_ref_used(closed_ref):
+            continue
+        closed_at = _ms_to_mysql_datetime(row.get("updatedTime") or row.get("createdTime"))
+        if not closed_at:
+            continue
+        deal = fetch_one(
+            """
+            SELECT *
+            FROM ai_site_trade_deals
+            WHERE user_id=%s
+              AND connection_id <=> %s
+              AND pair=%s
+              AND side=%s
+              AND status='open'
+              AND sent_at <= %s
+            ORDER BY sent_at ASC, id ASC
+            LIMIT 1
+            """,
+            (user_id, connection_id, pair, side, closed_at),
+        )
+        if not deal:
+            continue
+        pnl = _float(row.get("closedPnl"))
+        safety_orders, volume = _infer_safety_orders(deal, pnl)
+        updated = execute(
+            """
+            UPDATE ai_site_trade_deals
+            SET status='closed',
+                closed_at=%s,
+                closed_ref=%s,
+                closed_pnl=%s,
+                api_entry_value=%s,
+                matched_safety_orders=%s,
+                credited_volume=%s,
+                updated_at=NOW()
+            WHERE id=%s AND status='open'
+            """,
+            (
+                closed_at,
+                closed_ref,
+                pnl,
+                _closed_entry_value(row),
+                safety_orders,
+                volume,
+                int(deal["id"]),
+            ),
+        )
+        if updated:
+            execute(
+                """
+                UPDATE ai_site_trade_counter
+                SET traded_volume=traded_volume+%s, updated_at=NOW()
+                WHERE counter_key=%s
+                """,
+                (volume, COUNTER_KEY),
+            )
+            refresh_daily_site_trade_stats(_local_date_from_utc_string(closed_at))
+
+
+def refresh_recent_daily_site_trade_stats() -> None:
+    today = datetime.now(REPORT_TIMEZONE).date()
+    refresh_daily_site_trade_stats(today - timedelta(days=1))
+    refresh_daily_site_trade_stats(today)
+
+
+def refresh_daily_site_trade_stats(stat_date: date | str | None = None) -> dict:
+    day = _coerce_date(stat_date) or datetime.now(REPORT_TIMEZONE).date()
+    start_utc, end_utc = _day_bounds_utc(day)
+    row = fetch_one(
+        """
+        SELECT
+            (SELECT COUNT(*)
+             FROM ai_site_trade_deals
+             WHERE sent_at >= %s AND sent_at < %s) AS sent_deals_count,
+            (SELECT COUNT(*)
+             FROM ai_site_trade_deals
+             WHERE status='closed' AND closed_at >= %s AND closed_at < %s) AS closed_deals_count,
+            (SELECT COALESCE(SUM(credited_volume), 0)
+             FROM ai_site_trade_deals
+             WHERE status='closed' AND closed_at >= %s AND closed_at < %s) AS traded_volume
+        """,
+        (
+            start_utc,
+            end_utc,
+            start_utc,
+            end_utc,
+            start_utc,
+            end_utc,
+        ),
+    ) or {}
+    execute(
+        """
+        INSERT INTO ai_site_trade_daily_stats
+            (stat_date, sent_deals_count, closed_deals_count, traded_volume, calculated_at)
+        VALUES (%s, %s, %s, %s, NOW())
+        ON DUPLICATE KEY UPDATE
+            sent_deals_count=VALUES(sent_deals_count),
+            closed_deals_count=VALUES(closed_deals_count),
+            traded_volume=VALUES(traded_volume),
+            calculated_at=VALUES(calculated_at)
+        """,
+        (
+            day.isoformat(),
+            int(row.get("sent_deals_count") or 0),
+            int(row.get("closed_deals_count") or 0),
+            _float(row.get("traded_volume")),
+        ),
+    )
+    return {
+        "stat_date": day.isoformat(),
+        "sent_deals_count": int(row.get("sent_deals_count") or 0),
+        "closed_deals_count": int(row.get("closed_deals_count") or 0),
+        "traded_volume": _float(row.get("traded_volume")),
+    }
+
+
+def _ensure_counter() -> None:
+    execute(
+        """
+        INSERT IGNORE INTO ai_site_trade_counter
+        (counter_key, counted_from, deals_count, traded_volume)
+        VALUES (%s, %s, 0, 0)
+        """,
+        (COUNTER_KEY, COUNTER_START_DATE),
+    )
+
+
+def _deal_plan(payload: dict, order_volume: float | None, leverage: int | None) -> dict:
+    params = payload.get("params") if isinstance(payload, dict) else {}
+    params = params if isinstance(params, dict) else {}
+    open_params = params.get("open") if isinstance(params.get("open"), dict) else {}
+    dca_params = params.get("dca") if isinstance(params.get("dca"), dict) else {}
+    close_params = params.get("close") if isinstance(params.get("close"), dict) else {}
+
+    lev = max(1, int(_float(open_params.get("leverage") or leverage or 10)))
+    first_margin = _float(open_params.get("orderVolume") or order_volume)
+    dca_enabled = bool(dca_params.get("enabled", False))
+    dca_active = int(_float(dca_params.get("active") or 0)) if dca_enabled else 0
+    dca_margin = _float(dca_params.get("volume") or first_margin)
+    multiplier = _float(dca_params.get("multiplierVolume") or 1.0) or 1.0
+    tp_pct = _float(close_params.get("value") or 0)
+
+    margins = [max(0.0, first_margin)]
+    leg = max(0.0, dca_margin)
+    for _ in range(max(0, dca_active)):
+        margins.append(leg)
+        leg *= multiplier
+
+    planned_volumes = []
+    expected_profits = []
+    cumulative_margin = 0.0
+    for margin in margins:
+        cumulative_margin += margin
+        notional = cumulative_margin * lev
+        planned_volumes.append(round(notional, 8))
+        effective_tp = max(0.0, tp_pct / 100.0 - TAKER_ROUNDTRIP_FEE_RATE)
+        expected_profits.append(round(notional * effective_tp, 8))
+    if not planned_volumes:
+        planned_volumes = [0.0]
+        expected_profits = [0.0]
+    return {
+        "planned_volumes": planned_volumes,
+        "expected_profits": expected_profits,
+        "full_volume": planned_volumes[-1],
+        "active_safety_orders": max(0, dca_active),
+    }
+
+
+def _infer_safety_orders(deal: dict, pnl: float) -> tuple[int, float]:
+    planned_volumes = _json_list(deal.get("planned_volumes"))
+    expected_profits = _json_list(deal.get("expected_profits"))
+    if not planned_volumes:
+        full = _float(deal.get("full_volume"))
+        return 0, full
+    if pnl < 0:
+        idx = len(planned_volumes) - 1
+        return idx, float(planned_volumes[idx])
+    if not expected_profits:
+        return 0, float(planned_volumes[0])
+    size = min(len(expected_profits), len(planned_volumes))
+    idx = min(range(size), key=lambda index: abs(float(expected_profits[index]) - pnl))
+    return idx, float(planned_volumes[idx])
+
+
+def _position_side_from_closed_row(row: dict) -> str:
+    raw_side = str(row.get("side") or "").lower()
+    return "short" if raw_side == "buy" else ("long" if raw_side == "sell" else raw_side)
+
+
+def _closed_ref(row: dict) -> str:
+    symbol = str(row.get("symbol") or "").upper()
+    order_id = str(row.get("orderId") or "")
+    updated = str(row.get("updatedTime") or row.get("createdTime") or "")
+    return f"{symbol}:{order_id}:{updated}" if symbol and updated else ""
+
+
+def _closed_ref_used(closed_ref: str) -> bool:
+    return bool(fetch_one("SELECT id FROM ai_site_trade_deals WHERE closed_ref=%s LIMIT 1", (closed_ref,)))
+
+
+def _ms_to_mysql_datetime(value) -> str:
+    ms = _float(value)
+    if ms <= 0:
+        return ""
+    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _closed_entry_value(row: dict) -> float:
+    value = _float(row.get("cumEntryValue"))
+    if value > 0:
+        return value
+    return abs(_float(row.get("qty")) * _float(row.get("avgEntryPrice")))
+
+
+def _day_bounds_utc(day: date) -> tuple[str, str]:
+    start_local = datetime(day.year, day.month, day.day, tzinfo=REPORT_TIMEZONE)
+    end_local = start_local + timedelta(days=1)
+    return (
+        start_local.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        end_local.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+
+def _coerce_date(value: date | str | None) -> date | None:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.astimezone(REPORT_TIMEZONE).date()
+    if value:
+        try:
+            return date.fromisoformat(str(value)[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _local_date_from_utc_string(value: str) -> date:
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except ValueError:
+        return datetime.now(REPORT_TIMEZONE).date()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(REPORT_TIMEZONE).date()
+
+
+def _json_list(value) -> list[float]:
+    try:
+        items = json.loads(value or "[]") if isinstance(value, str) else (value or [])
+        return [float(item) for item in items]
+    except Exception:
+        return []
+
+
+def _float(value: object) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0

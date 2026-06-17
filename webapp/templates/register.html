@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ ui.auth.register_title }} · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <form class="auth-box" method="post" action="/register">
+    <h1>{{ ui.auth.register_title }}</h1>
+    {% if error %}<p class="alert">{{ error }}</p>{% endif %}
+    <label>{{ ui.auth.email }}<input name="email" type="email" required autocomplete="email"></label>
+    <label>{{ ui.auth.password }}<input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+    <label class="checkbox-row legal-checkbox">
+      <input name="personal_data_consent" type="checkbox" value="yes" required>
+      <span>
+        {% if lang == "ru" %}
+          Я даю согласие на обработку моих персональных данных в соответствии с Политикой конфиденциальности и условиями настоящего
+          <a href="/personal-data-consent" target="personal-data-consent" onclick="window.open('/personal-data-consent', 'personal-data-consent', 'width=760,height=720,scrollbars=yes'); return false;">согласия</a>.
+        {% else %}
+          I consent to the processing of my personal data under the Privacy Policy and this
+          <a href="/personal-data-consent" target="personal-data-consent" onclick="window.open('/personal-data-consent', 'personal-data-consent', 'width=760,height=720,scrollbars=yes'); return false;">consent</a>.
+        {% endif %}
+      </span>
+    </label>
+    <label class="checkbox-row legal-checkbox">
+      <input name="terms_acceptance" type="checkbox" value="yes" required>
+      <span>
+        {% if lang == "ru" %}
+          Я прочитал, понял и согласен с условиями <a href="/terms" target="_blank" rel="noopener">пользовательского соглашения</a>.
+        {% else %}
+          I have read, understood, and agree to the <a href="/terms" target="_blank" rel="noopener">User Agreement</a>.
+        {% endif %}
+      </span>
+    </label>
+    <button class="button primary full" type="submit">{{ ui.auth.create_button }}</button>
+    <p class="muted">{{ ui.auth.have_account }} <a href="/login">{{ ui.nav.login }}</a></p>
+  </form>
+</section>
+{% endblock %}

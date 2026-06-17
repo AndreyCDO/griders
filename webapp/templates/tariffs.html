@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}{{ "Тарифы" if lang == "ru" else "Plans" }} · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">{{ "Доступ к стратегиям" if lang == "ru" else "Strategy access" }}</p>
+    <h1>{{ "Тарифы Griders" if lang == "ru" else "Griders Plans" }}</h1>
+    <p class="muted">
+      {{ "Сейчас для всех тарифов доступна стратегия GRID DCA. Платные тарифы расширяют лимиты по количеству сделок и максимальному первому ордеру." if lang == "ru" else "GRID DCA is currently available on all plans. Paid plans increase deal limits and the maximum first order." }}
+    </p>
+    <p class="tariff-telegram-note">
+      {{ "Для подключения тарифа, привяжите телеграм аккаунт в профиле." if lang == "ru" else "To enable a plan, link your Telegram account in your profile." }}
+    </p>
+  </div>
+</section>
+
+<section class="tariff-grid">
+  <article class="panel tariff-card">
+    <div class="tariff-head">
+      <p class="eyebrow">{{ "Для тестирования" if lang == "ru" else "For testing" }}</p>
+      <h2>{{ "Бесплатный" if lang == "ru" else "Free" }}</h2>
+      <strong>0 USDT</strong>
+    </div>
+    <p class="muted">{{ "Базовый тариф для аккуратного тестирования стратегии на небольшом депозите." if lang == "ru" else "Basic plan for careful strategy testing on a small deposit." }}</p>
+    <ul class="tariff-list">
+      <li>{{ "Рекомендуемый депозит: от 50 USDT" if lang == "ru" else "Recommended deposit: from 50 USDT" }}</li>
+      <li>{{ "Стратегия: GRID DCA" if lang == "ru" else "Strategy: GRID DCA" }}</li>
+      <li>{{ "Максимум активных сделок: 4" if lang == "ru" else "Max active deals: 4" }}</li>
+      <li>{{ "Лонг-сделки: до 2" if lang == "ru" else "Long deals: up to 2" }}</li>
+      <li>{{ "Шорт-сделки: до 2" if lang == "ru" else "Short deals: up to 2" }}</li>
+      <li>{{ "Первый ордер: 6 USDT" if lang == "ru" else "First order: 6 USDT" }}</li>
+      <li>{{ "Недоступные пары: BTCUSDT, ETHUSDT, SOLUSDT" if lang == "ru" else "Unavailable pairs: BTCUSDT, ETHUSDT, SOLUSDT" }}</li>
+    </ul>
+    <a class="button secondary" href="/strategies">{{ "Открыть настройки" if lang == "ru" else "Open settings" }}</a>
+  </article>
+
+  <article class="panel tariff-card featured">
+    <div class="tariff-head">
+      <p class="eyebrow">{{ "Оптимальный старт" if lang == "ru" else "Optimal start" }}</p>
+      <h2>{{ "Старт" if lang == "ru" else "Start" }}</h2>
+      <strong class="tariff-price">
+        <span class="old-price">19.5 USDT / {{ "мес." if lang == "ru" else "mo." }}</span>
+        <span class="new-price">13.65 USDT / {{ "мес." if lang == "ru" else "mo." }}</span>
+      </strong>
+      <span class="tariff-promo">{{ "Первый месяц скидка 30%" if lang == "ru" else "30% off the first month" }}</span>
+    </div>
+    <p class="muted">{{ "Тариф для пользователей, которые хотят увеличить лимиты при умеренном депозите." if lang == "ru" else "A plan for users who want higher limits with a moderate deposit." }}</p>
+    <ul class="tariff-list">
+      <li>{{ "Рекомендуемый депозит: от 500 USDT" if lang == "ru" else "Recommended deposit: from 500 USDT" }}</li>
+      <li class="tariff-free-days">{{ "3 дня бесплатно, 1й месяц 13.65 USDT/мес, далее 19.5 USDT/мес" if lang == "ru" else "3 days free, first month 13.65 USDT/mo, then 19.5 USDT/mo" }}</li>
+      <li>{{ "Стратегия: GRID DCA" if lang == "ru" else "Strategy: GRID DCA" }}</li>
+      <li>{{ "Максимум активных сделок: 8" if lang == "ru" else "Max active deals: 8" }}</li>
+      <li>{{ "Лонг-сделки: до 4" if lang == "ru" else "Long deals: up to 4" }}</li>
+      <li>{{ "Шорт-сделки: до 4" if lang == "ru" else "Short deals: up to 4" }}</li>
+      <li>{{ "Максимальный первый ордер: 60 USDT" if lang == "ru" else "Maximum first order: 60 USDT" }}</li>
+      <li>{{ "Недоступная пара: BTCUSDT" if lang == "ru" else "Unavailable pair: BTCUSDT" }}</li>
+    </ul>
+    <a
+      class="button primary"
+      href="https://t.me/tribute/app?startapp=sXuB"
+      target="_blank"
+      rel="noopener"
+      data-tariff-subscribe
+      data-telegram-linked="{{ 1 if user and user.telegram_user_id else 0 }}"
+    >{{ "Подключить" if lang == "ru" else "Enable" }}</a>
+  </article>
+
+  <article class="panel tariff-card">
+    <div class="tariff-head">
+      <p class="eyebrow">{{ "Расширенные лимиты" if lang == "ru" else "Expanded limits" }}</p>
+      <h2>{{ "Премиум" if lang == "ru" else "Premium" }}</h2>
+      <strong>{{ "Скоро" if lang == "ru" else "Soon" }}</strong>
+    </div>
+    <p class="muted">{{ "Тариф для более крупного депозита и большего количества одновременных сделок." if lang == "ru" else "A plan for a larger deposit and more simultaneous deals." }}</p>
+    <ul class="tariff-list">
+      <li>{{ "Стратегия: GRID DCA" if lang == "ru" else "Strategy: GRID DCA" }}</li>
+      <li>{{ "Максимум активных сделок: 16" if lang == "ru" else "Max active deals: 16" }}</li>
+      <li>{{ "Лонг-сделки: до 8" if lang == "ru" else "Long deals: up to 8" }}</li>
+      <li>{{ "Шорт-сделки: до 8" if lang == "ru" else "Short deals: up to 8" }}</li>
+      <li>{{ "Максимальный первый ордер: 600 USDT" if lang == "ru" else "Maximum first order: 600 USDT" }}</li>
+      <li>{{ "Доступны все торговые пары из списка GRID DCA" if lang == "ru" else "All GRID DCA trading pairs are available" }}</li>
+      <li>{{ "Подходит только для пользователей, понимающих нагрузку DCA-сетки на депозит." if lang == "ru" else "Suitable only for users who understand the deposit load of a DCA grid." }}</li>
+    </ul>
+    <button class="button secondary tariff-disabled-button" type="button" disabled>{{ "Подключить" if lang == "ru" else "Enable" }}</button>
+  </article>
+</section>
+
+<script>
+  document.querySelectorAll("[data-tariff-subscribe]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (button.dataset.telegramLinked === "1") {
+        return;
+      }
+      event.preventDefault();
+      alert("{{ 'Для подключения тарифа, привяжите телеграм аккаунт в профиле' if lang == 'ru' else 'To enable a plan, link your Telegram account in your profile' }}");
+    });
+  });
+</script>
+{% endblock %}

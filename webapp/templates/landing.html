@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ app_name }} · {{ ui.landing.title }}{% endblock %}
+{% block content %}
+<section class="hero hero-simple">
+  <div class="hero-copy">
+    <p class="eyebrow">{{ ui.landing.eyebrow }}</p>
+    {% if lang == "en" %}
+      <h1>Griders</h1>
+      <p class="lead">A simple dashboard for Cryptorg futures Ghost Bots. Connect a read-only API key, choose one strategy per connection, and let the system prepare webhook signals with deposit-based risk control.</p>
+      <div class="feature-row">
+        <span>Futures only</span>
+        <span>Read-only monitoring</span>
+        <span>Webhook execution</span>
+        <span>Risk limits</span>
+      </div>
+    {% else %}
+      <h1>Автотрейдинг для Ghost Bot в <a href="#" class="stealth-link" data-external-url="https://cryptorg.net/?ref=101002">Cryptorg</a></h1>
+      <p class="lead">Griders анализирует сигналы <a href="#" class="stealth-link" data-external-url="https://ru.tradingview.com/pricing/?share_your_love=pump_reactor">TradingView</a>, фильтрует рынок по объёму, волатильности и рискам, автоматически рассчитывает DCA-сетку и запускает сделки через Ghost Bot.</p>
+      <p class="lead">Подключите API, выберите стратегию и доверьте исполнение алгоритму.</p>
+      <p class="lead"><strong>Бесплатный тариф без ограничений по времени — начните прямо сейчас.</strong></p>
+      <div class="feature-row">
+        <span>Только фьючерсы</span>
+        <span>Read-only мониторинг</span>
+        <span>Запуск через вебхук</span>
+        <span>Лимиты риска</span>
+      </div>
+    {% endif %}
+    <div class="hero-actions">
+      <a class="button primary" href="/register">{{ ui.landing.create }}</a>
+      <a class="button secondary" href="/login">{{ ui.nav.login }}</a>
+      <a class="button secondary" href="/docs">{{ ui.nav.docs }}</a>
+    </div>
+  </div>
+</section>
+<script>
+  document.querySelectorAll("[data-external-url]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      window.open(link.dataset.externalUrl, "_blank", "noopener,noreferrer");
+    });
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+{% block title %}{{ ui.strategies.title }} · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">{{ ui.strategies.eyebrow }}</p>
+    <h1>{{ ui.strategies.title }}</h1>
+  </div>
+</section>
+
+{% if connections %}
+<section class="panel compact-panel">
+  <form class="inline-form" method="get" action="/strategies">
+    <label>{{ ui.strategies.connection }}
+      <select name="connection_id" onchange="this.form.submit()">
+        {% for item in connections %}
+          <option value="{{ item.id }}" {% if item.id == selected_connection_id %}selected{% endif %}>{{ item.label }} · {{ item.strategy_name }}</option>
+        {% endfor %}
+      </select>
+      {% if selected_connection %}
+        <small class="field-help">{{ "Выбрано подключение" if lang == "ru" else "Selected connection" }}: {{ selected_connection.label }}</small>
+      {% endif %}
+    </label>
+  </form>
+</section>
+{% endif %}
+
+<section class="strategy-layout">
+  <aside class="strategy-card-panel">
+    {% for card in strategy_cards %}
+      <article class="strategy-card {% if card.code == strategy.strategy_code %}active{% endif %} {% if not user_access.is_admin and card.code != 'grid_dca_v2' %}restricted{% endif %}" data-strategy-card="{{ card.code }}">
+        <p class="eyebrow">{{ ui.strategies.strategy_choice }}</p>
+        <h2>{{ card.name }}</h2>
+        <p>{{ card.simple }}</p>
+        {% if not user_access.is_admin and card.code != "grid_dca_v2" %}
+          <p class="plan-limit-note">{{ "Для бесплатного использования доступна только стратегия GRID DCA." if lang == "ru" else "Only the GRID DCA strategy is available on the free plan." }}</p>
+        {% endif %}
+        <div class="strategy-card-facts">
+          <span>{{ card.profit }}</span>
+          <span>{{ card.risk }}</span>
+        </div>
+      </article>
+    {% endfor %}
+  </aside>
+
+  <form class="panel strategy-form" method="post" action="/strategies">
+    <input type="hidden" name="connection_id" value="{{ selected_connection_id }}">
+    {% if error %}
+      <p class="alert">{{ error }}</p>
+    {% endif %}
+    <div class="section-head">
+      <div>
+        <h2>{{ strategy_meta.name }}</h2>
+        <p class="muted">{{ strategy_meta.description }}</p>
+        {% if strategy_meta.code == "grid_dca_v2" %}
+          <div class="strategy-report-links">
+            <a class="report-link" href="/static/reports/grid-dca-26-tariffs.html" target="_blank" rel="noopener">
+              {{ "Бэктест стратегии для бесплатного тарифа и тарифа Старт за период 06.05.2026 — 05.06.2026" if lang == "ru" else "Strategy backtest for Free and Start plans for 2026-05-06 — 2026-06-05" }}
+            </a>
+            <a class="report-link" href="/static/reports/grid-dca-26-year-tariffs.html" target="_blank" rel="noopener">
+              {{ "Бэктест стратегии для всех тарифов за период 11.06.2025 — 11.06.2026" if lang == "ru" else "Strategy backtest for all plans for 2025-06-11 — 2026-06-11" }}
+            </a>
+          </div>
+        {% endif %}
+      </div>
+      <span class="badge">{{ ui.common.active if strategy.enabled and strategy.auto_trade else ui.common.disabled }}</span>
+    </div>
+
+    <div class="settings-section">
+      <label>{{ ui.strategies.strategy_choice }}
+        <select name="strategy_code" data-strategy-select data-free-plan="{{ 1 if not user_access.is_admin else 0 }}">
+          {% for code, meta in strategies.items() %}
+            <option value="{{ code }}" {% if strategy.strategy_code == code %}selected{% endif %}>{{ meta.name }}</option>
+          {% endfor %}
+        </select>
+        <small class="field-help plan-limit-note" data-market-plan-warning hidden>{{ "Для бесплатного использования доступна только стратегия GRID DCA." if lang == "ru" else "Only the GRID DCA strategy is available on the free plan." }}</small>
+      </label>
+      <div class="toggle-grid">
+        <label class="switch-row">
+          <input type="checkbox" name="enabled" value="1" {% if strategy.enabled and strategy.auto_trade %}checked{% endif %}>
+          <span>{{ ui.strategies.enable_strategy }}</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="settings-section form-grid" data-risk-calculator
+      data-balance="{{ volume_hint.balance }}"
+      data-safety-orders="{{ volume_hint.safety_orders }}"
+      data-martingale="{{ volume_hint.martingale_raw }}"
+      data-leverage="10"
+      data-min-first-order="6"
+      data-max-first-order="{{ volume_hint.max_first_order }}"
+      data-manual-first-order-cap="{{ volume_hint.manual_first_order_cap }}"
+      data-manual-first-order-unlimited="{{ 1 if volume_hint.manual_first_order_unlimited else 0 }}"
+      data-first-order-mode="{{ volume_hint.first_order_mode }}"
+      data-max-recommended="5"
+      data-no-balance="{{ ui.strategies.volume_calc_no_balance }}"
+      data-safe-text="{{ ui.strategies.risk_slider_safe }}"
+      data-warning-text="{{ ui.strategies.risk_slider_warning }}"
+      data-first-order-low-text="{{ 'При таком проценте от депозита объём первого ордера меньше необходимого минимума 6 USDT.' if lang == 'ru' else 'With this deposit percentage, the first order is below the required minimum of 6 USDT.' }}"
+      data-first-order-high-text="{{ 'Первый ордер при ручном вводе не может быть больше 8% от текущего депозита подключения.' if lang == 'ru' else 'The manual first order cannot exceed 8% of the current connection deposit.' }}"
+      data-current-text="{{ 'Сейчас' if lang == 'ru' else 'Current' }}"
+      data-summary-template="{{ ui.strategies.calc_summary }}"
+      data-summary-ok-template="{{ ui.strategies.calc_summary_ok }}"
+      data-summary-no-balance-template="{{ ui.strategies.calc_summary_no_balance }}"
+      data-manual-title="{{ 'Примерный расчёт объёма на 1 сделку' if lang == 'ru' else 'Estimated volume for one deal' }}"
+      data-deposit-title="{{ 'Расчёт первого ордера от депозита' if lang == 'ru' else 'First order calculated from deposit' }}"
+      data-manual-note="{{ 'При ручном вводе Griders берёт указанный первый ордер и рассчитывает примерную плановую маржу всей DCA-сетки.' if lang == 'ru' else 'In manual mode, Griders uses the entered first order and estimates the planned margin of the full DCA grid.' }}"
+      data-deposit-note="{{ 'При расчёте от депозита Griders сам рассчитывает первый ордер из выбранного процента, депозита, плеча x10 и средней DCA-сетки. Первый ордер должен быть не меньше 6 USDT.' if lang == 'ru' else 'When calculated from deposit, Griders derives the first order from the selected percentage, deposit, x10 leverage, and the average DCA grid. The first order must be at least 6 USDT.' }}"
+      data-deposit-summary-template="{{ 'При выбранном объёме {risk_pct}% от депозита первый ордер получается примерно {first_order} USDT. Плановая маржа сделки с учётом плеча x10 составит около {actual_pct}% депозита.' if lang == 'ru' else 'With {risk_pct}% of deposit selected, the first order is about {first_order} USDT. Planned deal margin with x10 leverage is about {actual_pct}% of the deposit.' }}"
+      data-deposit-low-template="{{ 'При выбранном объёме {risk_pct}% от депозита первый ордер получается {first_order} USDT, это меньше минимально допустимых 6 USDT. Увеличьте процент или депозит.' if lang == 'ru' else 'With {risk_pct}% of deposit selected, the first order is {first_order} USDT, below the required minimum of 6 USDT. Increase the percentage or deposit.' }}"
+      data-low-deposit-template="{{ ui.strategies.volume_calc_low_deposit }}">
+      {% if plan_limits.can_use_deposit_pct %}
+        <div class="form-wide order-mode-control">
+          <span>{{ "Расчёт объёма первого ордера" if lang == "ru" else "First order volume calculation" }}</span>
+          <label>
+            <input type="radio" name="first_order_mode" value="deposit_pct" data-order-mode-input {% if volume_hint.first_order_mode == "deposit_pct" %}checked{% endif %}>
+            {{ "Объём от депозита" if lang == "ru" else "From deposit percentage" }}
+          </label>
+          <label>
+            <input type="radio" name="first_order_mode" value="manual" data-order-mode-input {% if volume_hint.first_order_mode != "deposit_pct" %}checked{% endif %}>
+            {{ "Ручной ввод" if lang == "ru" else "Manual input" }}
+          </label>
+        </div>
+      {% else %}
+        <input type="hidden" name="first_order_mode" value="manual">
+      {% endif %}
+      <div class="risk-control">
+        <div class="range-head">
+          <label for="risk_pct">{{ ui.strategies.risk_per_signal }}</label>
+          <strong><span data-risk-value>{{ '%.2f'|format([strategy.risk_pct|float, plan_limits.max_risk_pct|float]|min) }}</span>%</strong>
+        </div>
+        <input id="risk_pct" name="risk_pct" type="range" step="0.1" min="1" max="{{ plan_limits.max_risk_pct }}" value="{{ '%.2f'|format([strategy.risk_pct|float, plan_limits.max_risk_pct|float]|min) }}" data-risk-input data-plan-locked="{{ 1 if not plan_limits.can_use_deposit_pct else 0 }}" {% if not plan_limits.can_use_deposit_pct %}disabled{% endif %}>
+        <small class="field-help" data-risk-status>{{ ui.strategies.risk_slider_safe }}</small>
+        <small class="field-help plan-limit-note" data-first-order-error hidden></small>
+        {% if plan_limits.can_use_deposit_pct %}
+          <small class="field-help plan-limit-note">
+            {% if user_access.is_admin %}
+              {{ "Максимум для админа — 15%." if lang == "ru" else "Admin maximum — 15%." }}
+            {% else %}
+              {{ "Максимум для тарифа — " ~ plan_limits.max_risk_pct ~ "%." if lang == "ru" else "Plan maximum — " ~ plan_limits.max_risk_pct ~ "%." }}
+            {% endif %}
+          </small>
+        {% endif %}
+        {% if not plan_limits.can_use_deposit_pct %}
+          <small class="field-help plan-limit-note">{{ "Ограничение бесплатного использования." if lang == "ru" else "Free plan limitation." }}</small>
+        {% endif %}
+      </div>
+      <label data-manual-order-panel>{{ ui.strategies.min_order_volume }}
+        <input name="min_order_volume" type="number" step="0.01" min="6" {% if not volume_hint.manual_first_order_unlimited %}max="{{ volume_hint.manual_first_order_cap }}"{% endif %} value="{{ '6.00' if user_access.is_free else volume_hint.first_order }}" data-first-order-input data-plan-locked="{{ 1 if user_access.is_free else 0 }}" {% if user_access.is_free %}disabled{% endif %}>
+        {% if user_access.is_free %}
+          <small class="field-help plan-limit-note">{{ "Ограничение для бесплатного пользования — 6 USDT." if lang == "ru" else "Free plan limitation — 6 USDT." }}</small>
+        {% elif volume_hint.manual_first_order_unlimited %}
+          <small class="field-help">{{ "Для админа ручной ввод первого ордера без ограничения 8% от депозита." if lang == "ru" else "For admin, manual first order input is not limited by 8% of deposit." }}</small>
+        {% elif volume_hint.manual_first_order_cap_has_balance %}
+          <small class="field-help">{{ "Максимум для ручного ввода сейчас — " ~ volume_hint.manual_first_order_cap ~ " USDT. Это 8% от текущего депозита подключения, но не выше лимита тарифа." if lang == "ru" else "Current manual maximum — " ~ volume_hint.manual_first_order_cap ~ " USDT. This is 8% of the current connection deposit, capped by the plan limit." }}</small>
+        {% else %}
+          <small class="field-help">{{ "Максимум ручного первого ордера рассчитается после обновления баланса через read-only API. До этого действует лимит тарифа — " ~ volume_hint.max_first_order ~ " USDT." if lang == "ru" else "The manual first order maximum will be calculated after the read-only API balance is refreshed. Until then, the plan limit applies — " ~ volume_hint.max_first_order ~ " USDT." }}</small>
+        {% endif %}
+      </label>
+      <div class="fixed-setting">
+        <span>{{ ui.strategies.leverage }}</span>
+        <strong>{{ "Плечо на стратегии фиксировано — x10" if lang == "ru" else "Strategy leverage is fixed at x10" }}</strong>
+      </div>
+      <div class="calc-panel form-wide">
+        <h3 data-calc-title>{{ ui.strategies.calc_title }}</h3>
+        <p class="form-note" data-calc-mode-note></p>
+        <div>
+          <span>{{ ui.strategies.calc_first_order }}</span>
+          <strong><span data-calc-first>{{ volume_hint.first_order }}</span> USDT</strong>
+        </div>
+        <div>
+          <span>{{ ui.strategies.calc_grid }}</span>
+          <strong>{{ volume_hint.safety_orders }} {{ ui.strategies.calc_safety_order_short }} · x{{ volume_hint.martingale }}</strong>
+        </div>
+        <div>
+          <span>{{ ui.strategies.calc_planned_margin }}</span>
+          <strong><span data-calc-margin>{{ volume_hint.required_margin }}</span> USDT</strong>
+        </div>
+        <div>
+          <span>{{ ui.strategies.calc_actual_deposit }}</span>
+          <strong data-calc-deposit-pct>{% if volume_hint.deposit_pct is not none %}{{ volume_hint.deposit_pct }}%{% else %}—{% endif %}</strong>
+        </div>
+        <p class="form-note" data-calc-summary></p>
+      </div>
+    </div>
+
+    <div class="settings-section form-grid">
+      <label>{{ ui.strategies.max_active_deals }}
+        <input name="max_active_deals" type="number" min="0" max="{{ plan_limits.max_active_deals }}" value="{{ strategy.max_active_deals if strategy.max_active_deals is not none else 2 }}">
+      </label>
+      <label>{{ ui.strategies.max_long_deals }}
+        <input name="max_long_deals" type="number" min="0" max="{{ plan_limits.max_long_deals }}" value="{{ strategy.max_long_deals if strategy.max_long_deals is not none else 1 }}">
+      </label>
+      <label>{{ ui.strategies.max_short_deals }}
+        <input name="max_short_deals" type="number" min="0" max="{{ plan_limits.max_short_deals }}" value="{{ strategy.max_short_deals if strategy.max_short_deals is not none else 1 }}">
+      </label>
+      <p class="form-note form-wide">{{ ui.strategies.deal_limits_help }}</p>
+      <p class="form-note form-wide plan-limit-note">
+        {% if lang == "ru" %}
+          Тариф {{ plan_limits.name_ru }}: активные сделки до {{ plan_limits.max_active_deals }}, лонг до {{ plan_limits.max_long_deals }}, шорт до {{ plan_limits.max_short_deals }}, первый ордер до {{ volume_hint.max_first_order }} USDT{% if volume_hint.recommended_balance %}, рекомендуемый баланс от {{ volume_hint.recommended_balance }} USDT{% endif %}.
+        {% else %}
+          {{ plan_limits.name_en }} plan: active deals up to {{ plan_limits.max_active_deals }}, long up to {{ plan_limits.max_long_deals }}, short up to {{ plan_limits.max_short_deals }}, first order up to {{ volume_hint.max_first_order }} USDT{% if volume_hint.recommended_balance %}, recommended balance from {{ volume_hint.recommended_balance }} USDT{% endif %}.
+        {% endif %}
+      </p>
+      {% if user_access.is_free %}
+        <p class="form-note form-wide plan-limit-note">{{ "На бесплатном тарифе можно выбрать: максимум активных сделок — от 0 до 4, максимум лонг-сделок — от 0 до 2, максимум шорт-сделок — от 0 до 2." if lang == "ru" else "On the free plan you can choose: max active deals from 0 to 4, max long deals from 0 to 2, max short deals from 0 to 2." }}</p>
+      {% endif %}
+    </div>
+
+    <div class="settings-section" data-watchlist-note {% if strategy.strategy_code not in ["market_shock_impulse_v1", "market_shock_reversal_dca_v21"] %}hidden{% endif %}>
+      <h3>{{ "Торговые пары" if lang == "ru" else "Trading pairs" }}</h3>
+      <p class="form-note">
+        {{ "Для стратегии MarketShok Impulse выбор торговых пар осуществляется системой. Griders автоматически берёт монеты из расширенного списка ликвидных фьючерсов, исключает стейблкоины и рискованные инструменты, а затем обрабатывает только подходящие сигналы Market Shock." if lang == "ru" else "For MarketShok Impulse, trading pairs are selected by the system. Griders automatically uses an expanded universe of liquid futures, excludes stablecoins and risky instruments, then processes only suitable Market Shock signals." }}
+      </p>
+    </div>
+
+    {% if strategy.strategy_code not in ["market_shock_impulse_v1", "market_shock_reversal_dca_v21"] %}
+    <div class="settings-section" data-watchlist-section>
+      <div class="pair-picker-head">
+        <label>{{ ui.strategies.watchlist }}</label>
+        <div class="pair-actions">
+          <button class="button tiny" type="button" data-pair-select="all">{{ ui.strategies.select_all }}</button>
+          <button class="button tiny" type="button" data-pair-select="none">{{ ui.strategies.clear_all }}</button>
+        </div>
+      </div>
+      <div class="pair-grid">
+        {% for pair in pair_options %}
+          {% set pair_locked = pair.symbol in plan_disabled_pairs %}
+          <label class="pair-option {% if pair_locked %}locked{% endif %}">
+            <input type="checkbox" name="watchlist" value="{{ pair.symbol }}" {% if pair.symbol in selected_pairs and not pair_locked %}checked{% endif %} {% if pair_locked %}disabled{% endif %}>
+            <span><strong>{{ pair.symbol }}</strong></span>
+          </label>
+        {% endfor %}
+      </div>
+      {% if plan_disabled_pairs %}
+        <p class="form-note plan-limit-note">
+          {% if lang == "ru" %}
+            На тарифе {{ plan_limits.name_ru }} недоступны пары: {{ plan_disabled_pairs|sort|join(", ") }}.
+          {% else %}
+            On the {{ plan_limits.name_en }} plan, these pairs are unavailable: {{ plan_disabled_pairs|sort|join(", ") }}.
+          {% endif %}
+        </p>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="form-actions">
+      <button class="button primary" type="submit">{{ ui.strategies.save }}</button>
+    </div>
+  </form>
+</section>
+
+<script>
+  document.querySelectorAll("[data-pair-select]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const checked = button.dataset.pairSelect === "all";
+      document.querySelectorAll(".pair-option input").forEach((input) => {
+        if (input.disabled) return;
+        input.checked = checked;
+      });
+    });
+  });
+
+  const strategySelect = document.querySelector("[data-strategy-select]");
+  const strategyCards = document.querySelectorAll("[data-strategy-card]");
+  const watchlistSection = document.querySelector("[data-watchlist-section]");
+  const watchlistNote = document.querySelector("[data-watchlist-note]");
+  if (strategySelect) {
+    const syncStrategyUi = () => {
+      const isMarketShock = ["market_shock_impulse_v1", "market_shock_reversal_dca_v21"].includes(strategySelect.value);
+      const isFreePlan = strategySelect.dataset.freePlan === "1";
+      const marketWarning = document.querySelector("[data-market-plan-warning]");
+      strategyCards.forEach((card) => {
+        card.classList.toggle("active", card.dataset.strategyCard === strategySelect.value);
+      });
+      strategySelect.classList.toggle("plan-locked-select", isFreePlan && isMarketShock);
+      if (marketWarning) {
+        marketWarning.hidden = !(isFreePlan && isMarketShock);
+      }
+      if (watchlistSection) {
+        watchlistSection.hidden = isMarketShock;
+      }
+      if (watchlistNote) {
+        watchlistNote.hidden = !isMarketShock;
+      }
+    };
+    strategySelect.addEventListener("change", syncStrategyUi);
+    syncStrategyUi();
+  }
+
+  const calculator = document.querySelector("[data-risk-calculator]");
+  if (calculator) {
+    const riskInput = calculator.querySelector("[data-risk-input]");
+    const riskValue = calculator.querySelector("[data-risk-value]");
+    const riskStatus = calculator.querySelector("[data-risk-status]");
+    const firstOrderInput = calculator.querySelector("[data-first-order-input]");
+    const firstOrderError = calculator.querySelector("[data-first-order-error]");
+    const orderModeInputs = calculator.querySelectorAll("[data-order-mode-input]");
+    const manualOrderPanel = calculator.querySelector("[data-manual-order-panel]");
+    const riskControl = calculator.querySelector(".risk-control");
+    const calcFirst = calculator.querySelector("[data-calc-first]");
+    const calcMargin = calculator.querySelector("[data-calc-margin]");
+    const calcDepositPct = calculator.querySelector("[data-calc-deposit-pct]");
+    const calcSummary = calculator.querySelector("[data-calc-summary]");
+    const calcTitle = calculator.querySelector("[data-calc-title]");
+    const calcModeNote = calculator.querySelector("[data-calc-mode-note]");
+    const balance = Number(calculator.dataset.balance || 0);
+    const safetyOrders = Number(calculator.dataset.safetyOrders || 4);
+    const martingale = Number(calculator.dataset.martingale || 1.15);
+    const maxRecommended = Number(calculator.dataset.maxRecommended || 5);
+    const minFirstOrder = Number(calculator.dataset.minFirstOrder || 6);
+    const maxFirstOrder = Number(calculator.dataset.maxFirstOrder || 100000);
+    const maxManualFirstOrder = Number(calculator.dataset.manualFirstOrderCap || maxFirstOrder);
+    const manualFirstOrderUnlimited = calculator.dataset.manualFirstOrderUnlimited === "1";
+
+    const money = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const pct = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    function gridFactor() {
+      let factor = 1;
+      let leg = 1;
+      for (let i = 0; i < safetyOrders; i += 1) {
+        factor += leg;
+        leg *= martingale;
+      }
+      return factor;
+    }
+
+    function recalc() {
+      const riskMax = Number(riskInput.max || 7);
+      const risk = Math.min(riskMax, Math.max(1, Number(riskInput.value || 1)));
+      const mode = selectedOrderMode();
+      const leverage = Math.max(1, Number(calculator.dataset.leverage || 10));
+      const calculatedFirstOrder = balance > 0 ? balance * (risk / 100) * leverage / gridFactor() : 0;
+      const manualInputValue = Number(firstOrderInput.value || minFirstOrder);
+      const firstOrder = mode === "deposit_pct"
+        ? Math.min(maxFirstOrder, Math.max(0, calculatedFirstOrder))
+        : (manualFirstOrderUnlimited ? Math.max(minFirstOrder, manualInputValue) : Math.min(maxManualFirstOrder, Math.max(minFirstOrder, manualInputValue)));
+      const plannedMargin = firstOrder * gridFactor() / leverage;
+      const actualPct = balance > 0 ? plannedMargin / balance * 100 : null;
+      const recommendedDeposit = plannedMargin / (risk / 100);
+      const safeDeposit = plannedMargin / 0.02;
+      const isHighRisk = risk > maxRecommended;
+      const minOrderLimitsDeal = balance > 0 && actualPct > risk;
+      const riskLocked = riskInput.dataset.planLocked === "1";
+      const orderTooLow = mode === "deposit_pct" && balance > 0 && calculatedFirstOrder < minFirstOrder;
+      const manualTooHigh = !manualFirstOrderUnlimited && mode === "manual" && !firstOrderInput.disabled && manualInputValue > maxManualFirstOrder;
+      const manualMode = mode === "manual";
+      const firstOrderLocked = firstOrderInput.dataset.planLocked === "1";
+
+      if (calcTitle) {
+        calcTitle.textContent = manualMode ? calculator.dataset.manualTitle : calculator.dataset.depositTitle;
+      }
+      if (calcModeNote) {
+        calcModeNote.textContent = manualMode ? calculator.dataset.manualNote : calculator.dataset.depositNote;
+      }
+      riskValue.textContent = pct.format(risk);
+      if (riskLocked || manualMode) {
+        riskInput.style.background = "#dce3e8";
+      } else {
+        paintRange(risk, isHighRisk);
+      }
+      calcFirst.textContent = money.format(firstOrder);
+      calcMargin.textContent = money.format(plannedMargin);
+      calcDepositPct.textContent = actualPct === null ? "—" : `${pct.format(actualPct)}%`;
+      calculator.classList.toggle("high-risk", isHighRisk);
+      if (riskControl) {
+        riskControl.classList.toggle("high-risk", isHighRisk);
+      }
+      riskStatus.textContent = isHighRisk ? calculator.dataset.warningText : calculator.dataset.safeText;
+      if (manualOrderPanel) {
+        manualOrderPanel.classList.toggle("disabled-field", firstOrderLocked || mode === "deposit_pct");
+      }
+      if (firstOrderInput) {
+        firstOrderInput.disabled = firstOrderLocked || mode === "deposit_pct";
+      }
+      if (riskInput) {
+        riskInput.disabled = riskLocked || manualMode;
+        if (riskControl) {
+          riskControl.classList.toggle("disabled-field", riskLocked || manualMode);
+        }
+      }
+      if (firstOrderError) {
+        const message = orderTooLow
+          ? `${calculator.dataset.firstOrderLowText} ${calculator.dataset.currentText}: ${money.format(calculatedFirstOrder)} USDT.`
+          : manualTooHigh
+            ? `${calculator.dataset.firstOrderHighText} ${calculator.dataset.currentText}: ${money.format(maxManualFirstOrder)} USDT.`
+            : "";
+        firstOrderError.hidden = !message;
+        firstOrderError.textContent = message;
+      }
+      if (riskInput && !riskInput.disabled) {
+        riskInput.setCustomValidity(orderTooLow ? (firstOrderError ? firstOrderError.textContent : calculator.dataset.firstOrderLowText) : "");
+      }
+      if (firstOrderInput && !firstOrderInput.disabled) {
+        firstOrderInput.setCustomValidity(manualTooHigh ? (firstOrderError ? firstOrderError.textContent : calculator.dataset.firstOrderHighText) : "");
+      }
+
+      if (actualPct === null) {
+        calcSummary.textContent = template(calculator.dataset.summaryNoBalanceTemplate, {
+          risk_pct: pct.format(risk),
+          recommended_deposit: money.format(recommendedDeposit),
+        });
+        return;
+      }
+
+      if (mode === "deposit_pct") {
+        calcSummary.textContent = template(orderTooLow ? calculator.dataset.depositLowTemplate : calculator.dataset.depositSummaryTemplate, {
+          first_order: money.format(firstOrder),
+          actual_pct: pct.format(actualPct),
+          risk_pct: pct.format(risk),
+        });
+        return;
+      }
+
+      const summaryTemplate = minOrderLimitsDeal ? calculator.dataset.summaryTemplate : calculator.dataset.summaryOkTemplate;
+      calcSummary.textContent = template(summaryTemplate, {
+        actual_pct: pct.format(actualPct),
+        risk_pct: pct.format(risk),
+        recommended_deposit: money.format(recommendedDeposit),
+        safe_deposit: money.format(safeDeposit),
+      });
+    }
+
+    function paintRange(risk, isHighRisk) {
+      const min = Number(riskInput.min || 1);
+      const max = Number(riskInput.max || 20);
+      const progress = (risk - min) / (max - min) * 100;
+      const color = isHighRisk ? "#b6471d" : "#0b8f70";
+      riskInput.style.background = `linear-gradient(to right, ${color} 0%, ${color} ${progress}%, #dce3e8 ${progress}%, #dce3e8 100%)`;
+    }
+
+    function selectedOrderMode() {
+      const selected = Array.from(orderModeInputs).find((input) => input.checked);
+      return selected ? selected.value : (calculator.dataset.firstOrderMode || "manual");
+    }
+
+    function template(text, values) {
+      return Object.entries(values).reduce((result, [key, value]) => {
+        return result.replaceAll(`{${key}}`, value);
+      }, text || "");
+    }
+
+    riskInput.addEventListener("input", recalc);
+    firstOrderInput.addEventListener("input", recalc);
+    orderModeInputs.forEach((input) => input.addEventListener("change", recalc));
+    recalc();
+  }
+</script>
+{% endblock %}

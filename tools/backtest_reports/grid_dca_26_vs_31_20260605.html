@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GRID DCA 2.6 vs 3.1 · Backtest</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef3f1;
+      --panel: #ffffff;
+      --ink: #10202a;
+      --muted: #64727e;
+      --line: #dbe4e3;
+      --green: #159b73;
+      --green-soft: #dff5ec;
+      --blue: #2477d4;
+      --blue-soft: #e5f0ff;
+      --red: #c74949;
+      --amber: #b6791c;
+      --shadow: 0 18px 50px rgba(24, 46, 58, .12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(36,119,212,.14), transparent 32rem),
+        linear-gradient(180deg, #f7faf9, var(--bg));
+    }
+    .wrap { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 36px 0 54px; }
+    header { display: flex; gap: 24px; align-items: end; justify-content: space-between; margin-bottom: 24px; }
+    h1 { margin: 0; font-size: clamp(28px, 4vw, 48px); letter-spacing: 0; line-height: 1.05; }
+    h2 { margin: 0 0 16px; font-size: 19px; }
+    .lead { max-width: 720px; color: var(--muted); margin: 12px 0 0; font-size: 16px; }
+    .stamp { color: var(--muted); text-align: right; }
+    .grid { display: grid; gap: 16px; }
+    .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .panel, .card {
+      background: rgba(255,255,255,.88);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .panel { padding: 22px; }
+    .card { padding: 18px; min-height: 126px; }
+    .kicker { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+    .value { display: block; margin-top: 12px; font-size: 30px; font-weight: 800; }
+    .note { color: var(--muted); margin-top: 8px; }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+    .bars { display: grid; gap: 16px; }
+    .bar-row { display: grid; grid-template-columns: 86px 1fr; gap: 14px; align-items: center; }
+    .bar-label { color: var(--muted); font-weight: 700; }
+    .bar-pair { display: grid; gap: 8px; }
+    .bar-line { height: 30px; border-radius: 6px; background: #edf3f2; position: relative; overflow: hidden; }
+    .bar-line b { position: absolute; left: 10px; top: 4px; font-size: 14px; }
+    .bar { display: block; height: 100%; border-radius: inherit; opacity: .9; }
+    .bar.v26 { background: linear-gradient(90deg, #9fc4ff, var(--blue)); }
+    .bar.v31 { background: linear-gradient(90deg, #97e3c7, var(--green)); }
+    .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+    .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 10px; font-weight: 800; font-size: 13px; }
+    .pill.blue { background: var(--blue-soft); color: var(--blue); }
+    .pill.green { background: var(--green-soft); color: var(--green); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .summary { display: grid; grid-template-columns: 1.15fr .85fr; gap: 16px; margin-top: 16px; }
+    ul { margin: 0; padding-left: 18px; }
+    li { margin: 8px 0; }
+    @media (max-width: 860px) {
+      header, .summary { display: block; }
+      .stamp { text-align: left; margin-top: 12px; }
+      .cards, .two { grid-template-columns: 1fr; }
+      .panel { padding: 18px; overflow-x: auto; }
+      .bar-row { grid-template-columns: 1fr; gap: 6px; }
+      table { min-width: 720px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <div>
+        <h1>GRID DCA 2.6 vs GRID DCA 3.1</h1>
+        <p class="lead">Сравнение двух версий стратегии по 20 фьючерсным парам. В расчёте: 15m свечи, RSI 15m/1h, вход по открытию следующей свечи, pessimistic intrabar, taker 0.05%, первый ордер 6 USDT, глобальная пауза 3 часа после стоп-лосса.</p>
+      </div>
+      <div class="stamp">Обновлено<br><strong>05.06.2026</strong></div>
+    </header>
+
+    <section class="grid cards">
+      <div class="card"><span class="kicker">Лучший результат 30д</span><span class="value pos">+21.88</span><div class="note">GRID DCA 2.6, USDT</div></div>
+      <div class="card"><span class="kicker">GRID DCA 3.1</span><span class="value pos">+5.70</span><div class="note">30 дней, USDT</div></div>
+      <div class="card"><span class="kicker">Сигналов 30д</span><span class="value">1362 / 706</span><div class="note">2.6 даёт почти в 1.9 раза больше сделок</div></div>
+      <div class="card"><span class="kicker">Вывод</span><span class="value">2.6</span><div class="note">лучше по общей прибыли на 14/30/60 днях</div></div>
+    </section>
+
+    <div class="legend"><span class="pill blue">GRID DCA 2.6</span><span class="pill green">GRID DCA 3.1</span></div>
+    <section class="grid two">
+      <section class="panel"><h2>Кумулятивный PnL</h2><div class="bars">
+        <div class="bar-row">
+          <div class="bar-label">14 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:40.37%"></span><b>12.11 USDT</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:8.43%"></span><b>2.53 USDT</b></div>
+          </div>
+        </div>
+        
+        <div class="bar-row">
+          <div class="bar-label">30 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:72.94%"></span><b>21.88 USDT</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:19.00%"></span><b>5.70 USDT</b></div>
+          </div>
+        </div>
+        
+        <div class="bar-row">
+          <div class="bar-label">60 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:96.71%"></span><b>29.01 USDT</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:27.18%"></span><b>8.15 USDT</b></div>
+          </div>
+        </div>
+        </div></section>
+      <section class="panel"><h2>Количество сделок</h2><div class="bars">
+        <div class="bar-row">
+          <div class="bar-label">14 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:32.04%"></span><b>737.00</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:15.13%"></span><b>348.00</b></div>
+          </div>
+        </div>
+        
+        <div class="bar-row">
+          <div class="bar-label">30 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:59.22%"></span><b>1362.00</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:30.70%"></span><b>706.00</b></div>
+          </div>
+        </div>
+        
+        <div class="bar-row">
+          <div class="bar-label">60 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:98.04%"></span><b>2255.00</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:55.00%"></span><b>1265.00</b></div>
+          </div>
+        </div>
+        </div></section>
+      <section class="panel"><h2>Win rate</h2><div class="bars">
+        <div class="bar-row">
+          <div class="bar-label">14 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:98.24%"></span><b>98.24%</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:97.41%"></span><b>97.41%</b></div>
+          </div>
+        </div>
+        
+        <div class="bar-row">
+          <div class="bar-label">30 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:98.24%"></span><b>98.24%</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:97.59%"></span><b>97.59%</b></div>
+          </div>
+        </div>
+        
+        <div class="bar-row">
+          <div class="bar-label">60 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:97.92%"></span><b>97.92%</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:97.39%"></span><b>97.39%</b></div>
+          </div>
+        </div>
+        </div></section>
+      <section class="panel"><h2>Стоп-лоссы</h2><div class="bars">
+        <div class="bar-row">
+          <div class="bar-label">14 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:26.67%"></span><b>12.00</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:20.00%"></span><b>9.00</b></div>
+          </div>
+        </div>
+        
+        <div class="bar-row">
+          <div class="bar-label">30 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:51.11%"></span><b>23.00</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:37.78%"></span><b>17.00</b></div>
+          </div>
+        </div>
+        
+        <div class="bar-row">
+          <div class="bar-label">60 дней</div>
+          <div class="bar-pair">
+            <div class="bar-line"><span class="bar v26" style="width:97.78%"></span><b>44.00</b></div>
+            <div class="bar-line"><span class="bar v31" style="width:71.11%"></span><b>32.00</b></div>
+          </div>
+        </div>
+        </div></section>
+    </section>
+
+    <section class="summary">
+      <div class="panel">
+        <h2>Ключевой вывод</h2>
+        <ul>
+          <li><strong>GRID DCA 2.6 прибыльнее</strong> на всех окнах: 14д, 30д и 60д.</li>
+          <li><strong>GRID DCA 3.1 действительно режет количество входов</strong> примерно на 44-48%, но прибыль падает сильнее, чем риск.</li>
+          <li>3.1 полезна как осторожная админская версия, но пока не выглядит лучше основной стратегии.</li>
+          <li>Самая слабая зона обеих версий — pullback-входы, особенно по TIA, DOT, ARB, ZEC.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>Рекомендация</h2>
+        <p>Основной пользовательской стратегией оставить <strong>GRID DCA 2.6</strong>. Версию <strong>3.1</strong> не выкатывать пользователям как замену: её стоит дорабатывать точечно, особенно фильтры pullback и список монет.</p>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top:16px">
+      <h2>PnL по парам за 30 дней</h2>
+      <table>
+        <thead>
+          <tr><th>Пара</th><th>GRID 2.6</th><th>GRID 3.1</th><th>Лучше</th><th>Разница 3.1 - 2.6</th></tr>
+        </thead>
+        <tbody>
+          
+        <tr>
+          <td><strong>BTCUSDT</strong></td>
+          <td class="pos">+2.15</td>
+          <td class="pos">+1.22</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-0.93</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>ETHUSDT</strong></td>
+          <td class="pos">+0.46</td>
+          <td class="neg">-0.31</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-0.76</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>SOLUSDT</strong></td>
+          <td class="pos">+1.59</td>
+          <td class="pos">+0.58</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-1.01</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>HYPEUSDT</strong></td>
+          <td class="pos">+2.72</td>
+          <td class="pos">+0.36</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-2.36</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>NEARUSDT</strong></td>
+          <td class="pos">+1.46</td>
+          <td class="pos">+1.14</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-0.32</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>ZECUSDT</strong></td>
+          <td class="pos">+2.96</td>
+          <td class="neg">-0.76</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-3.72</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>TONUSDT</strong></td>
+          <td class="pos">+3.29</td>
+          <td class="neg">-0.22</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-3.51</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>XRPUSDT</strong></td>
+          <td class="pos">+0.89</td>
+          <td class="pos">+0.38</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-0.52</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>SUIUSDT</strong></td>
+          <td class="neg">-0.36</td>
+          <td class="pos">+0.50</td>
+          <td><span class="pill green">3.1</span></td>
+          <td class="pos">+0.86</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>DOGEUSDT</strong></td>
+          <td class="neg">-1.09</td>
+          <td class="pos">+0.85</td>
+          <td><span class="pill green">3.1</span></td>
+          <td class="pos">+1.94</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>TAOUSDT</strong></td>
+          <td class="pos">+1.65</td>
+          <td class="pos">+1.04</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-0.61</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>RENDERUSDT</strong></td>
+          <td class="neg">-0.70</td>
+          <td class="pos">+0.15</td>
+          <td><span class="pill green">3.1</span></td>
+          <td class="pos">+0.84</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>ADAUSDT</strong></td>
+          <td class="neg">-0.87</td>
+          <td class="pos">+0.62</td>
+          <td><span class="pill green">3.1</span></td>
+          <td class="pos">+1.50</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>INJUSDT</strong></td>
+          <td class="pos">+1.40</td>
+          <td class="neg">-0.33</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-1.73</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>TIAUSDT</strong></td>
+          <td class="neg">-1.46</td>
+          <td class="neg">-2.66</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-1.21</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>ENAUSDT</strong></td>
+          <td class="pos">+1.97</td>
+          <td class="pos">+1.11</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-0.86</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>LINKUSDT</strong></td>
+          <td class="neg">-1.25</td>
+          <td class="pos">+0.60</td>
+          <td><span class="pill green">3.1</span></td>
+          <td class="pos">+1.84</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>AVAXUSDT</strong></td>
+          <td class="neg">-0.09</td>
+          <td class="pos">+1.86</td>
+          <td><span class="pill green">3.1</span></td>
+          <td class="pos">+1.95</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>DOTUSDT</strong></td>
+          <td class="neg">-1.79</td>
+          <td class="neg">-1.96</td>
+          <td><span class="pill blue">2.6</span></td>
+          <td class="neg">-0.18</td>
+        </tr>
+        
+
+        <tr>
+          <td><strong>ARBUSDT</strong></td>
+          <td class="neg">-0.41</td>
+          <td class="neg">-0.16</td>
+          <td><span class="pill green">3.1</span></td>
+          <td class="pos">+0.25</td>
+        </tr>
+        
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

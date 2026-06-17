@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ ui.signals.title }} · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">{{ ui.signals.eyebrow }}</p>
+    <h1>{{ ui.signals.title }}</h1>
+  </div>
+</section>
+
+{% if connections %}
+<section class="panel compact-panel">
+  <form class="inline-form" method="get" action="/signals">
+    <label>{{ ui.signals.connection }}
+      <select name="connection_id" onchange="this.form.submit()">
+        {% for item in connections %}
+          <option value="{{ item.id }}" {% if item.id == selected_connection_id %}selected{% endif %}>{{ item.label }} В· {{ item.strategy_name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+</section>
+{% endif %}
+
+{% if selected_connection %}
+<section class="metrics">
+  <div class="metric"><span>{{ ui.signals.connection }}</span><strong>{{ selected_connection.label }}</strong></div>
+  <div class="metric"><span>{{ ui.dashboard.strategy }}</span><strong>{{ selected_connection.strategy_name }}</strong></div>
+</section>
+{% endif %}
+
+<section class="panel">
+  {% include "partials/signals_table.html" %}
+</section>
+{% endblock %}

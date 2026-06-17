@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}2FA · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <form class="auth-box" method="post" action="/login/2fa">
+    <h1>{{ "Подтверждение входа" if lang == "ru" else "Login confirmation" }}</h1>
+    {% if error %}<p class="alert">{{ error }}</p>{% endif %}
+    <p class="muted">
+      {% if method == "pin" %}
+        {{ "Введите PIN-код, который вы настроили в профиле." if lang == "ru" else "Enter the PIN code configured in your profile." }}
+      {% else %}
+        {{ "Введите 6-значный код из Google Authenticator." if lang == "ru" else "Enter the 6-digit code from Google Authenticator." }}
+      {% endif %}
+    </p>
+    <label>
+      {{ "Код подтверждения" if lang == "ru" else "Verification code" }}
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus>
+    </label>
+    <button class="button primary full" type="submit">{{ "Подтвердить" if lang == "ru" else "Confirm" }}</button>
+    <p class="muted"><a href="/login">{{ "Вернуться ко входу" if lang == "ru" else "Back to login" }}</a></p>
+  </form>
+</section>
+{% endblock %}

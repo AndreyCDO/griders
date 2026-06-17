@@ -1,0 +1,19 @@
+.deploy/
+__pycache__/
+*.py[cod]
+*.log
+cryptorg_webhook_issue_logs_*.md
+
+# Local secrets
+working-example/config.php
+working-example/ctgacademy_r.sql
+
+# Local runtime data and compiled services
+m1/m1_server
+m1/m1_server.exe
+m1/*.o
+m1_data/
+
+# Generated reports are served as static artifacts, not source.
+webapp/static/reports/*year-tariffs.html
+webapp/static/reports/*year-tariffs.json

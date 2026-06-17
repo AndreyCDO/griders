@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}{{ ui.nav.docs }} · {{ app_name }}{% endblock %}
+{% block content %}
+{% if lang == "en" %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Product Guide</p>
+    <h1>How Griders Works</h1>
+  </div>
+</section>
+
+<section class="docs-grid">
+  <article class="panel doc-panel">
+    <h2>What Griders Does</h2>
+    <p>Griders helps run Cryptorg futures Ghost Bots from prepared market signals. It reads balance, open positions, and closed PnL through a read-only Cryptorg Bybit Liquidity API key, then sends trade commands to Cryptorg through a Ghost Bot webhook.</p>
+    <p>Each connection uses one strategy. For all user plans, one account can create one connection, and that connection uses the current public GRID DCA strategy. Admin-only experimental strategies and multiple connections may exist internally, but they are not part of the public paid plans.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Plans</h2>
+    <p>There are three plans: Free, Start, and Premium. All plans currently use GRID DCA. Paid plans increase deal limits and maximum first order size.</p>
+    <p>Free: recommended deposit from 50 USDT, max active deals 4, max long deals 2, max short deals 2, first order fixed at 6 USDT. BTCUSDT, ETHUSDT, and SOLUSDT are unavailable.</p>
+    <p>Start: recommended deposit from 500 USDT, max active deals 8, max long deals 4, max short deals 4, maximum first order 60 USDT. BTCUSDT is unavailable. Start is paid through Tribute: 3 days free, first month 13.65 USDT/month, then 19.5 USDT/month.</p>
+    <p>Premium: max active deals 16, max long deals 8, max short deals 8, maximum first order 600 USDT. All GRID DCA pairs are available. Premium activation is planned.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Paid Plan Activation</h2>
+    <ol>
+      <li>Open Profile and enter your Telegram account without the @ sign.</li>
+      <li>Click Change Telegram and confirm the account through <code>@griders_tarif_bot</code>.</li>
+      <li>Open Plans and click Enable for the selected paid plan.</li>
+      <li>Complete the subscription through Tribute.</li>
+      <li>After payment, Griders checks whether your confirmed Telegram account has access to the corresponding private Telegram channel.</li>
+    </ol>
+    <p>If you have access to both Start and Premium channels, Griders applies Premium. If the subscription is cancelled, expires, is not renewed, or cannot be verified, the plan can return to Free.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Account Security</h2>
+    <p>In Profile you can set a nickname, link Telegram, change email, choose a time zone, request a password reset, and enable two-factor authentication.</p>
+    <p>Two 2FA modes are available: PIN code or Google Authenticator. When 2FA is enabled, login requires email, password, and the second confirmation code.</p>
+    <p>Telegram usernames must be unique. If you change Telegram, the old Telegram verification is reset and you must confirm the new account through the bot.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>How To Connect Cryptorg</h2>
+    <ol>
+      <li>In Cryptorg, create or open a futures Ghost Bot for the pair/strategy you want to use.</li>
+      <li>Copy the Ghost Bot webhook URL. It usually starts with <code>https://api3.cryptorg.net/crazy/hook/...</code>.</li>
+      <li>Create a Cryptorg API key with read-only access for Bybit Liquidity futures data.</li>
+      <li>Add the Griders server IP to the Cryptorg API whitelist if Cryptorg requires it.</li>
+      <li>In Griders, open Connections and click Add connection.</li>
+      <li>Enter a connection name, the Cryptorg API key, API secret, and Ghost Bot webhook URL.</li>
+      <li>Save the connection, then click Test read-only API. If the key works, Griders updates the USDT balance.</li>
+      <li>Open Strategies, select the same connection, configure GRID DCA risk and limits, then save.</li>
+    </ol>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Selected Connection</h2>
+    <p>The selected connection is remembered across Overview, Connections, Strategies, Signals, and Monitoring. The Overview page shows which connection is active.</p>
+    <p>Regular user plans allow one connection per account. Admin accounts can use several connections for testing and service management.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>GRID DCA 2.6</h2>
+    <p>GRID DCA 2.6 uses TradingView alerts for selected pairs. The Pine Script evaluates market stage, trend, volatility, ATR, direction, RSI on 15m and 1h, BTC/ETH market pressure, Bollinger position, and impulse candles, then sends a signal to Griders.</p>
+    <p>For safety, the same pair cannot be launched more than once per minute, and each user can launch no more than one long webhook and one short webhook every 5 minutes.</p>
+    <p>Griders prepares a Cryptorg Ghost Bot command with first order, DCA grid, take profit, stop loss, leverage x10, and one trading cycle. The user chooses the pairs for this strategy manually within the limits of the plan.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Risk Settings</h2>
+    <p>Deal volume from deposit is the target share of the real deposit allocated to one planned deal. The slider becomes high-risk above 5%.</p>
+    <p>Minimum first order is the starting order sent to Cryptorg. The practical minimum is 6 USDT because Cryptorg Bybit Liquidity usually rejects smaller futures orders.</p>
+    <p>Leverage is fixed at x10. The volume calculation estimates the first order and planned DCA margin using this fixed leverage.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Deal Limits</h2>
+    <p>You can limit the maximum number of active deals, long deals, and short deals. A value of 0 means Griders will not open new deals for that limit.</p>
+    <p>Before launching a strategy signal, Griders checks open futures positions through the read-only API. If a limit is reached, the signal is skipped and no webhook is sent.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Signals And Launch</h2>
+    <p>Signals are shown per selected connection. When the strategy is enabled, Griders sends the webhook automatically only when filters, plan limits, deal limits, cooldowns, and risk pauses allow it.</p>
+    <p>When the strategy is disabled, no trading webhook is sent. Manual webhook launch from the interface is not part of the current user flow.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Monitoring</h2>
+    <p>The Monitoring page reads data through the selected connection read-only API key. It shows balance, closed PnL, period return, trade count, win rate, average daily PnL, open positions, and unrealised PnL.</p>
+    <p>The chart shows cumulative PnL as a line and daily trade count as bars. Hover over a point to see the date, daily PnL, cumulative PnL, and number of trades for that day.</p>
+    <p>Dates and signal times are shown in the time zone selected in Profile.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Strategy Pauses</h2>
+    <p>For GRID DCA, a stop-loss-like close pauses new GRID DCA launches. Daily loss protection can also pause launches when the closed daily loss exceeds the configured threshold.</p>
+    <p>The Overview page shows active pauses and their reason. The user can manually override some pauses, but doing so increases risk.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Third-Party Services</h2>
+    <p>Griders depends on Cryptorg, Bybit liquidity, TradingView, Telegram, Tribute, hosting, email providers, and market data APIs. These services have their own rules, fees, limitations, outages, and support procedures.</p>
+    <p>Paid subscriptions are handled through Tribute. Subscription management, cancellation, payment failures, and refund requests are handled according to Tribute and Telegram rules.</p>
+  </article>
+</section>
+{% else %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Руководство</p>
+    <h1>Как работает Griders</h1>
+  </div>
+</section>
+
+<section class="docs-grid">
+  <article class="panel doc-panel">
+    <h2>Что делает Griders</h2>
+    <p>Griders помогает запускать фьючерсные Cryptorg Ghost Bot по подготовленным рыночным сигналам. Сайт читает баланс, открытые позиции и закрытый PnL через read-only API ключ Cryptorg Bybit Liquidity, а команды на сделки отправляет в Cryptorg через webhook гоуст-бота.</p>
+    <p>На одно подключение выбирается одна стратегия. Для всех пользовательских тарифов один аккаунт может создать одно подключение, и это подключение использует актуальную публичную стратегию GRID DCA. Экспериментальные стратегии и несколько подключений могут существовать для админского тестирования, но они не входят в публичные платные тарифы.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Тарифы</h2>
+    <p>Есть три тарифа: Бесплатный, Старт и Премиум. Сейчас все тарифы работают со стратегией GRID DCA. Платные тарифы расширяют лимиты сделок и максимальный первый ордер.</p>
+    <p>Бесплатный: рекомендуемый депозит от 50 USDT, максимум активных сделок 4, лонг-сделок 2, шорт-сделок 2, первый ордер фиксированно 6 USDT. Недоступны пары BTCUSDT, ETHUSDT и SOLUSDT.</p>
+    <p>Старт: рекомендуемый депозит от 500 USDT, максимум активных сделок 8, лонг-сделок 4, шорт-сделок 4, максимальный первый ордер 60 USDT. Недоступна пара BTCUSDT. Оплата через Tribute: 3 дня бесплатно, первый месяц 13.65 USDT/мес, далее 19.5 USDT/мес.</p>
+    <p>Премиум: максимум активных сделок 16, лонг-сделок 8, шорт-сделок 8, максимальный первый ордер 600 USDT. Доступны все пары GRID DCA. Подключение Premium будет активировано позже.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Как подключить платный тариф</h2>
+    <ol>
+      <li>Откройте Профиль и укажите телеграм аккаунт без знака @.</li>
+      <li>Нажмите Сменить телеграм и подтвердите аккаунт через <code>@griders_tarif_bot</code>.</li>
+      <li>Откройте Тарифы и нажмите Подключить у нужного платного тарифа.</li>
+      <li>Оформите подписку через Tribute.</li>
+      <li>После оплаты Griders проверяет, есть ли у подтверждённого телеграм аккаунта доступ к соответствующему закрытому каналу тарифа.</li>
+    </ol>
+    <p>Если пользователь подписан сразу на каналы Start и Premium, применяется тариф Premium. Если подписка отменена, закончилась, не продлена или её не удаётся проверить, тариф может вернуться на Бесплатный.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Безопасность аккаунта</h2>
+    <p>В Профиле можно указать ник, привязать телеграм, изменить почту, выбрать часовой пояс, отправить запрос на смену пароля и включить двухфакторную аутентификацию.</p>
+    <p>Доступны два варианта 2FA: PIN-код или Google Authenticator. Если 2FA включена, при входе сайт попросит email, пароль и второй код подтверждения.</p>
+    <p>Телеграм аккаунт должен быть уникальным. Если пользователь меняет телеграм, старая привязка сбрасывается, и новый аккаунт нужно подтвердить через бота.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Как подключиться к Cryptorg</h2>
+    <ol>
+      <li>В Cryptorg создайте или откройте фьючерсного Ghost Bot под нужную пару или стратегию.</li>
+      <li>Скопируйте webhook гоуст-бота. Обычно он начинается с <code>https://api3.cryptorg.net/crazy/hook/...</code>.</li>
+      <li>Создайте в Cryptorg API ключ с правами только на чтение для Bybit Liquidity futures.</li>
+      <li>Если Cryptorg требует whitelist, добавьте IP сервера Griders в разрешённые IP.</li>
+      <li>В Griders откройте Подключения и нажмите Добавить подключение.</li>
+      <li>Укажите понятное название подключения, API ключ Cryptorg, API секрет и webhook гоуст-бота.</li>
+      <li>Сохраните подключение и нажмите Проверить read-only API. Если ключ работает, Griders обновит баланс в USDT.</li>
+      <li>Откройте Стратегии, выберите это же подключение, настройте GRID DCA и сохраните.</li>
+    </ol>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Выбранное подключение</h2>
+    <p>Выбранное подключение запоминается между разделами Обзор, Подключения, Стратегии, Сигналы и Мониторинг. В Обзоре сверху видно, какое подключение сейчас активно.</p>
+    <p>Для обычных тарифов доступно одно подключение на аккаунт. Админские аккаунты могут использовать несколько подключений для тестирования и управления сервисом.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>GRID DCA 2.6</h2>
+    <p>GRID DCA 2.6 использует сигналы TradingView по выбранным пользователем парам. Pine Script оценивает стадию рынка, тренд, волатильность, ATR, направление, RSI на 15м и 1ч, давление BTC/ETH, положение в Bollinger Bands и импульсные свечи, затем отправляет сигнал в Griders.</p>
+    <p>Для безопасности одна и та же пара не может запускаться чаще одного раза в минуту, а по одному пользователю может уйти не больше одного webhook в лонг и одного webhook в шорт каждые 5 минут.</p>
+    <p>Griders готовит команду для Cryptorg Ghost Bot: первый ордер, сетка DCA, тейк-профит, стоп-лосс, фиксированное плечо x10 и один торговый цикл. Монеты для стратегии пользователь выбирает сам в пределах ограничений тарифа.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Настройки риска</h2>
+    <p>Объём от депозита на сделку — это целевая доля реального депозита, которую Griders планирует использовать на одну сделку. Если значение выше 5%, ползунок показывает повышенный риск.</p>
+    <p>Минимальный первый ордер — это стартовый ордер, который отправляется в Cryptorg. Практический минимум — 6 USDT, потому что Cryptorg Bybit Liquidity обычно не принимает фьючерсные сделки меньшего размера.</p>
+    <p>Плечо фиксировано на уровне x10. Расчёт объёма первого ордера и плановой маржи DCA-сетки строится с учётом этого плеча.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Лимиты сделок</h2>
+    <p>Можно ограничить максимальное число активных сделок, лонг-сделок и шорт-сделок. Значение 0 означает, что Griders не будет открывать новые сделки по этому лимиту.</p>
+    <p>Перед запуском сигнала стратегии Griders проверяет открытые фьючерсные позиции через read-only API. Если лимит достигнут, сигнал пропускается и webhook не отправляется.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Сигналы и запуск</h2>
+    <p>Сигналы отображаются по выбранному подключению. Если стратегия включена, Griders отправляет webhook автоматически только когда фильтры, лимиты тарифа, лимиты сделок, паузы и защитные интервалы разрешают вход.</p>
+    <p>Если стратегия выключена, торговый webhook не отправляется. Ручной запуск webhook из интерфейса сейчас не входит в пользовательский сценарий.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Мониторинг</h2>
+    <p>Раздел Мониторинг читает данные через read-only API ключ выбранного подключения. Там отображаются баланс, закрытый PnL, доходность за период, количество сделок, win rate, средний PnL в день, открытые позиции и нереализованный PnL.</p>
+    <p>На графике линия показывает кумулятивный PnL, а столбики снизу — количество сделок по дням. При наведении на точку видно дату, PnL за день, накопленный PnL и число сделок за этот день.</p>
+    <p>Время сигналов и сделок отображается по часовому поясу, выбранному в профиле пользователя.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Паузы стратегий</h2>
+    <p>Для GRID DCA закрытие, похожее на стоп-лосс, ставит паузу новых запусков. Защита по дневному убытку также может временно остановить новые входы, если закрытый дневной убыток превышает заданный порог.</p>
+    <p>В Обзоре показываются активные паузы и причины. Пользователь может вручную снять часть пауз, но это повышает риск.</p>
+  </article>
+
+  <article class="panel doc-panel">
+    <h2>Сторонние сервисы</h2>
+    <p>Griders зависит от Cryptorg, ликвидности Bybit, TradingView, Telegram, Tribute, хостинга, почтовых провайдеров и API рыночных данных. У этих сервисов есть собственные правила, комиссии, ограничения, сбои и служба поддержки.</p>
+    <p>Платные подписки оформляются через Tribute. Управление подпиской, отмена, ошибки оплаты и запросы на возврат регулируются правилами Tribute и Telegram.</p>
+  </article>
+</section>
+{% endif %}
+{% endblock %}

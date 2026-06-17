@@ -1,0 +1,36 @@
+{% if signals %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>{{ ui.signals.time }}</th>
+        <th>{{ ui.signals.pair }}</th>
+        <th>{{ ui.signals.side }}</th>
+        <th>{{ ui.signals.status }}</th>
+        <th>{{ ui.signals.volume }}</th>
+        <th>{{ ui.signals.reasons }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for signal in signals %}
+        <tr>
+          <td><time datetime="{{ signal.created_at_iso }}">{{ signal.created_at }}</time></td>
+          <td><strong>{{ signal.pair }}</strong></td>
+          <td><span class="side {{ signal.side }}">{{ ui.sides.get(signal.side, signal.side) }}</span></td>
+          <td><span class="status {{ signal.status }}">{{ ui.statuses.get(signal.status, signal.status) }}</span></td>
+          <td>{{ signal.order_volume or '—' }}</td>
+          <td>
+            <div class="reasons">
+              {% for reason in signal.reasons_list[:3] %}
+                <span>{{ reason }}</span>
+              {% endfor %}
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <p class="empty">{{ ui.signals.empty }}</p>
+{% endif %}
