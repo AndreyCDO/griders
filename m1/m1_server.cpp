@@ -129,6 +129,45 @@ struct ActiveRun {
     long long updated_at = 0;
 };
 
+struct Deal {
+    std::string deal_id;
+    int bot_id = 0;
+    std::string bot_name;
+    std::string symbol;
+    std::string strategy;
+    bool live = false;
+    std::string status = "created";
+    int open_type = 2;
+    int leverage = 10;
+    double planned_margin_usdt = 0.0;
+    double planned_volume = 0.0;
+    double mark_price = 0.0;
+    std::string config_json;
+    long long created_at = 0;
+    long long updated_at = 0;
+};
+
+struct DealOrder {
+    std::string deal_id;
+    std::string label;
+    std::string symbol;
+    int side = 0;
+    int type = 0;
+    int open_type = 2;
+    int leverage = 0;
+    double price = 0.0;
+    double vol = 0.0;
+    double margin_usdt = 0.0;
+    double take_profit_price = 0.0;
+    double stop_loss_price = 0.0;
+    std::string status = "planned";
+    std::string exchange_order_id;
+    std::string request_json;
+    std::string response_json;
+    long long created_at = 0;
+    long long updated_at = 0;
+};
+
 const std::vector<std::string> kTrackedPairs = {
     "BTC_USDT", "ETH_USDT", "SOL_USDT", "HYPE_USDT", "NEAR_USDT",
     "ZEC_USDT", "TON_USDT", "XRP_USDT", "SUI_USDT", "FIL_USDT",
@@ -146,6 +185,9 @@ std::string normalize_symbol(std::string value);
 std::string compact_symbol(const std::string& symbol);
 std::string format_number(double value, int scale);
 std::string json_escape(const std::string& value);
+std::string bot_to_json(const BotConfig& bot);
+std::string json_field(const std::string& object, const std::string& key);
+std::string json_object_field(const std::string& object, const std::string& key);
 void append_bot_log(const std::string& text);
 
 std::mutex g_active_runs_mutex;

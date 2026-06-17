@@ -380,6 +380,7 @@ std::string execute_plan(const BotPlan& plan, bool live) {
     if (live && (conn.api_key.empty() || conn.api_secret.empty())) {
         return "{\"ok\":false,\"error\":\"MEXC API key/secret not configured\"}";
     }
+    Deal deal = create_deal_from_plan(plan, live);
     std::ostringstream orders_json;
     bool all_ok = true;
     bool first_order_ok = !live;
@@ -393,17 +394,32 @@ std::string execute_plan(const BotPlan& plan, bool live) {
         if (live && !order_ok && mexc_order_endpoint_blocked(response)) order_endpoint_blocked = true;
         if (order.label == "first market") first_order_ok = order_ok;
         if (!order_ok) all_ok = false;
+        append_deal_order(deal, order, body, response, order_ok);
         if (!first) orders_json << ",";
         first = false;
         orders_json << "{\"label\":\"" << json_escape(order.label) << "\",\"ok\":" << (order_ok ? "true" : "false") << ",\"request\":" << body << ",\"response\":\"" << json_escape(response.substr(0, 800)) << "\"}";
         if (live && order.label == "first market" && !order_ok) break;
     }
+    if (live) {
+        if (first_order_ok && all_ok) {
+            deal.status = "active";
+        } else if (first_order_ok) {
+            deal.status = "active_with_errors";
+        } else {
+            deal.status = "failed";
+        }
+    } else {
+        deal.status = all_ok ? "dry_run" : "dry_run_with_errors";
+    }
+    deal.updated_at = now_ms();
+    upsert_deal(deal);
     if (live && first_order_ok) {
         register_active_run(plan);
         sync_position_protection_soon();
     }
     std::ostringstream result;
     result << "{\"ok\":" << (all_ok ? "true" : "false") << ",\"live\":" << (live ? "true" : "false");
+    result << ",\"dealId\":\"" << json_escape(deal.deal_id) << "\"";
     if (!all_ok && order_endpoint_blocked) {
         result << ",\"error\":\"MEXC private order endpoint returned Access Denied; order create appears unavailable from this server/API path\"";
     } else if (!all_ok) {
