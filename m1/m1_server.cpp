@@ -26,7 +26,7 @@
 
 namespace {
 
-constexpr const char* kMexcBase = "https://contract.mexc.com";
+constexpr const char* kMexcBase = "https://api.mexc.com";
 constexpr int kDefaultPort = 8010;
 
 struct MexcConnection {

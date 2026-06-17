@@ -222,13 +222,13 @@ void sync_position_protection(const MexcConnection& conn, ActiveRun& run, double
     if (tp > 0) {
         int trigger_type = is_long ? 1 : 2;
         std::string body = close_trigger_body(run, tp, trigger_type, hold_vol, spec);
-        std::string resp = mexc_post_private(conn, "/api/v1/private/planorder/place", body);
+        std::string resp = mexc_post_private(conn, "/api/v1/private/planorder/place/v2", body);
         append_bot_log("manager " + run.run_id + " tp " + body + " => " + resp.substr(0, 500));
     }
     if (sl > 0) {
         int trigger_type = is_long ? 2 : 1;
         std::string body = close_trigger_body(run, sl, trigger_type, hold_vol, spec);
-        std::string resp = mexc_post_private(conn, "/api/v1/private/planorder/place", body);
+        std::string resp = mexc_post_private(conn, "/api/v1/private/planorder/place/v2", body);
         append_bot_log("manager " + run.run_id + " sl " + body + " => " + resp.substr(0, 500));
     }
 
@@ -335,6 +335,7 @@ bool mexc_response_success(const std::string& response) {
 bool mexc_order_endpoint_blocked(const std::string& response) {
     return response.find("Access Denied") != std::string::npos
         || response.find("order/submit") != std::string::npos
+        || response.find("order/create") != std::string::npos
         || response.find("Under maintenance") != std::string::npos;
 }
 
@@ -375,7 +376,7 @@ std::string execute_plan(const BotPlan& plan, bool live) {
     bool first = true;
     for (const auto& order : plan.orders) {
         std::string body = mexc_order_body(order, plan.spec);
-        std::string response = live ? mexc_post_private(conn, "/api/v1/private/order/submit", body) : "{\"dryRun\":true}";
+        std::string response = live ? mexc_post_private(conn, "/api/v1/private/order/create", body) : "{\"dryRun\":true}";
         append_bot_log(order.label + " " + body + " => " + response.substr(0, 800));
         bool order_ok = !live || mexc_response_success(response);
         if (live && !order_ok && mexc_order_endpoint_blocked(response)) order_endpoint_blocked = true;
@@ -390,7 +391,7 @@ std::string execute_plan(const BotPlan& plan, bool live) {
     std::ostringstream result;
     result << "{\"ok\":" << (all_ok ? "true" : "false") << ",\"live\":" << (live ? "true" : "false");
     if (!all_ok && order_endpoint_blocked) {
-        result << ",\"error\":\"MEXC private order endpoint returned Access Denied; order submit appears unavailable from this server/API path\"";
+        result << ",\"error\":\"MEXC private order endpoint returned Access Denied; order create appears unavailable from this server/API path\"";
     } else if (!all_ok) {
         result << ",\"error\":\"one or more MEXC requests failed\"";
     }
