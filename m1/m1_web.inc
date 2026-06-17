@@ -27,8 +27,9 @@ std::string layout(const std::string& body, const std::string& flash = "") {
     html << "label{display:grid;gap:6px;font-weight:760;margin-bottom:14px}input,textarea{min-height:42px;border:1px solid var(--line);border-radius:7px;padding:9px 11px;font:inherit}textarea{min-height:260px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}.form{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}.wide{grid-column:1/-1}.button{border:1px solid var(--accent);background:var(--accent);color:white;border-radius:7px;padding:10px 14px;font-weight:760;cursor:pointer}.secondary{background:white;color:var(--accent)}";
     html << ".flash{padding:10px 12px;border-radius:7px;background:#eaf7f1;border:1px solid #a9d9c4;color:#06785e;margin-bottom:18px}.warn{background:#fff4ef;border-color:#f0c4b1;color:var(--warn)}";
     html << "table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid var(--line);white-space:nowrap}th{font-size:12px;color:var(--muted);text-transform:uppercase}.scroll{overflow-x:auto}.pill{display:inline-flex;min-height:24px;align-items:center;padding:3px 8px;border-radius:7px;background:#eef2f5;color:var(--muted);font-size:12px;font-weight:780}.ok{background:#eaf7f1;color:#06785e}.bad{background:#f8ece8;color:#a43e1c}.fee{color:#06785e;font-weight:800}.muted{color:var(--muted)}.small{font-size:13px;color:var(--muted)}pre{white-space:pre-wrap;word-break:break-word;background:#f7faf9;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:13px}";
-    html << "@media(max-width:860px){.grid,.form{grid-template-columns:1fr}.head{display:block}h1{font-size:32px}}";
-    html << "</style></head><body><header class=\"top\"><span class=\"mark\">M1</span><span class=\"brand\">Griders · MEXC</span><nav class=\"nav\"><a href=\"/bots\">Список ботов</a><a href=\"/connections\">Подключения</a></nav></header><main class=\"shell\">";
+    html << ".metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.metric{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:var(--shadow)}.metric b{display:block;font-size:22px;line-height:1.15}.metric span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800;margin-bottom:4px}.raw{max-height:360px;overflow:auto}";
+    html << "@media(max-width:860px){.grid,.form,.metric-grid{grid-template-columns:1fr}.head{display:block}h1{font-size:32px}.nav{gap:9px;margin-left:8px;flex-wrap:wrap}.top{height:auto}}";
+    html << "</style></head><body><header class=\"top\"><span class=\"mark\">M1</span><span class=\"brand\">Griders · MEXC</span><nav class=\"nav\"><a href=\"/bots\">Список ботов</a><a href=\"/account\">Аккаунт</a><a href=\"/connections\">Подключения</a></nav></header><main class=\"shell\">";
     html << "<div class=\"beta\">M1 работает отдельно от основного Griders. Торговая логика MEXC пока находится в разработке.</div>";
     if (!flash.empty()) html << flash;
     html << body << "</main></body></html>";
@@ -71,6 +72,157 @@ std::string home_page(const std::string& flash = "") {
     body << "<form method=\"post\" action=\"/bot/preview\"><label class=\"wide\">JSON команда<textarea name=\"payload\" spellcheck=\"false\">" << html_escape(default_bot_json()) << "</textarea></label><button class=\"button secondary\" type=\"submit\">Показать план</button></form>";
     body << "<form method=\"post\" action=\"/bot/run\" style=\"margin-top:12px\"><label class=\"wide\">JSON команда для запуска<textarea name=\"payload\" spellcheck=\"false\">" << html_escape(default_bot_json()) << "</textarea></label><label style=\"display:flex;gap:8px;align-items:center;font-weight:700\"><input type=\"checkbox\" name=\"live\" value=\"1\" style=\"min-height:0;width:auto\"> Отправить ордера в MEXC</label><button class=\"button\" type=\"submit\">Запустить вручную</button></form>";
     body << "<p class=\"small\">Webhook endpoint: <code>/hook/&lt;secret&gt;</code>. Команда передаётся POST JSON в том же формате. Для безопасности secret задаётся в переменной M1_WEBHOOK_SECRET.</p></section>";
+    return layout(body.str(), flash);
+}
+
+std::vector<std::string> json_array_objects(const std::string& array_json) {
+    std::vector<std::string> objects;
+    bool in_string = false;
+    bool escaped = false;
+    int depth = 0;
+    size_t begin = std::string::npos;
+    for (size_t i = 0; i < array_json.size(); ++i) {
+        char ch = array_json[i];
+        if (in_string) {
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '"') in_string = false;
+            continue;
+        }
+        if (ch == '"') in_string = true;
+        else if (ch == '{') {
+            if (depth == 0) begin = i;
+            depth++;
+        } else if (ch == '}') {
+            depth--;
+            if (depth == 0 && begin != std::string::npos) {
+                objects.push_back(array_json.substr(begin, i - begin + 1));
+                begin = std::string::npos;
+            }
+        }
+    }
+    return objects;
+}
+
+std::string json_value_or_dash(const std::string& object, const std::string& key) {
+    std::string value = json_field(object, key);
+    return value.empty() ? "—" : value;
+}
+
+std::string render_asset_table(const std::string& assets) {
+    std::vector<std::string> rows = json_array_objects(json_array_field(assets, "data"));
+    std::ostringstream body;
+    body << "<div class=\"scroll\"><table><thead><tr><th>Валюта</th><th>Equity</th><th>Доступно</th><th>Cash</th><th>Frozen</th><th>Position margin</th><th>Unrealized</th><th>Bonus</th><th>Available open</th><th>Debt</th></tr></thead><tbody>";
+    if (rows.empty()) body << "<tr><td colspan=\"10\" class=\"muted\">Нет данных по активам.</td></tr>";
+    for (const auto& row : rows) {
+        body << "<tr><td><strong>" << html_escape(json_value_or_dash(row, "currency")) << "</strong></td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "equity")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "availableBalance")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "cashBalance")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "frozenBalance")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "positionMargin")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "unrealized")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "bonus")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "availableOpen")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "debtAmount")) << "</td></tr>";
+    }
+    body << "</tbody></table></div>";
+    return body.str();
+}
+
+std::string render_positions_table(const std::string& positions) {
+    std::vector<std::string> rows = json_array_objects(json_array_field(positions, "data"));
+    std::ostringstream body;
+    body << "<div class=\"scroll\"><table><thead><tr><th>Пара</th><th>Сторона</th><th>Vol</th><th>Avg</th><th>Плечо</th><th>Маржа</th><th>Ликвидация</th><th>Realised</th><th>Fee</th><th>ID</th></tr></thead><tbody>";
+    if (rows.empty()) body << "<tr><td colspan=\"10\" class=\"muted\">Открытых позиций нет.</td></tr>";
+    for (const auto& row : rows) {
+        std::string side = json_field(row, "positionType") == "2" ? "short" : "long";
+        body << "<tr><td><strong>" << html_escape(json_value_or_dash(row, "symbol")) << "</strong></td>";
+        body << "<td><span class=\"pill " << (side == "long" ? "ok" : "bad") << "\">" << side << "</span></td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "holdVol")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "holdAvgPrice")) << "</td>";
+        body << "<td>x" << html_escape(json_value_or_dash(row, "leverage")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "im")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "liquidatePrice")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "realised")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "totalFee")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "positionId")) << "</td></tr>";
+    }
+    body << "</tbody></table></div>";
+    return body.str();
+}
+
+std::string render_orders_table(const std::string& orders, const std::string& empty_text) {
+    std::vector<std::string> rows = json_array_objects(json_array_field(orders, "data"));
+    std::ostringstream body;
+    body << "<div class=\"scroll\"><table><thead><tr><th>ID</th><th>Пара</th><th>Side</th><th>Type</th><th>Цена</th><th>Vol</th><th>Плечо</th><th>State</th><th>Margin</th><th>Fee</th></tr></thead><tbody>";
+    if (rows.empty()) body << "<tr><td colspan=\"10\" class=\"muted\">" << html_escape(empty_text) << "</td></tr>";
+    for (const auto& row : rows) {
+        std::string id = json_field(row, "orderId");
+        if (id.empty()) id = json_field(row, "id");
+        std::string type = json_field(row, "orderType");
+        if (type.empty()) type = json_field(row, "triggerType");
+        std::string price = json_field(row, "price");
+        if (price.empty()) price = json_field(row, "triggerPrice");
+        body << "<tr><td>" << html_escape(id.empty() ? "—" : id) << "</td>";
+        body << "<td><strong>" << html_escape(json_value_or_dash(row, "symbol")) << "</strong></td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "side")) << "</td>";
+        body << "<td>" << html_escape(type.empty() ? "—" : type) << "</td>";
+        body << "<td>" << html_escape(price.empty() ? "—" : price) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "vol")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "leverage")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "state")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "orderMargin")) << "</td>";
+        body << "<td>" << html_escape(json_value_or_dash(row, "totalFee")) << "</td></tr>";
+    }
+    body << "</tbody></table></div>";
+    return body.str();
+}
+
+std::string account_page(const std::string& flash = "") {
+    MexcConnection conn = load_connection();
+    if (conn.api_key.empty() || conn.api_secret.empty()) {
+        std::ostringstream body;
+        body << "<section class=\"head\"><div><p class=\"eyebrow\">MEXC account</p><h1>Аккаунт</h1><p class=\"lead\">Сначала сохраните API key и API secret для MEXC Futures.</p></div><a class=\"button\" href=\"/connections\">Подключения</a></section>";
+        return layout(body.str(), "<div class=\"flash warn\">MEXC подключение не настроено.</div>");
+    }
+
+    long long now = now_ms();
+    long long start = now - 30LL * 24 * 60 * 60 * 1000;
+    std::string assets = mexc_get_private(conn, "/api/v1/private/account/assets");
+    std::string positions = mexc_get_private(conn, "/api/v1/private/position/open_positions");
+    std::string open_orders = mexc_get_private(conn, "/api/v1/private/order/list/open_orders", "page_num=1&page_size=100");
+    std::string plan_orders = mexc_get_private(conn, "/api/v1/private/planorder/list/orders", "end_time=" + std::to_string(now) + "&page_num=1&page_size=100&start_time=" + std::to_string(start) + "&states=1");
+    std::string stop_orders = mexc_get_private(conn, "/api/v1/private/stoporder/list/orders", "is_finished=0&page_num=1&page_size=100");
+
+    std::string equity = parse_usdt_equity(assets);
+    int asset_count = static_cast<int>(json_array_objects(json_array_field(assets, "data")).size());
+    int position_count = static_cast<int>(json_array_objects(json_array_field(positions, "data")).size());
+    int order_count = static_cast<int>(json_array_objects(json_array_field(open_orders, "data")).size());
+    int plan_count = static_cast<int>(json_array_objects(json_array_field(plan_orders, "data")).size());
+    int stop_count = static_cast<int>(json_array_objects(json_array_field(stop_orders, "data")).size());
+    bool ok = assets.find("\"success\":true") != std::string::npos && positions.find("\"success\":true") != std::string::npos;
+
+    std::ostringstream body;
+    body << "<section class=\"head\"><div><p class=\"eyebrow\">MEXC account</p><h1>Аккаунт</h1><p class=\"lead\">Баланс, позиции, активные ордера и сырой read-only ответ MEXC Futures для подключённого ключа.</p></div><a class=\"button secondary\" href=\"/account\">Обновить</a></section>";
+    body << "<section class=\"metric-grid\">";
+    body << "<div class=\"metric\"><span>USDT equity</span><b>" << html_escape(equity.empty() ? "—" : equity) << "</b></div>";
+    body << "<div class=\"metric\"><span>Активы</span><b>" << asset_count << "</b></div>";
+    body << "<div class=\"metric\"><span>Позиции</span><b>" << position_count << "</b></div>";
+    body << "<div class=\"metric\"><span>Ордера</span><b>" << (order_count + plan_count + stop_count) << "</b></div>";
+    body << "</section>";
+    body << "<section class=\"panel\"><h2>Подключение</h2><p><strong>" << html_escape(conn.label.empty() ? "MEXC Futures" : conn.label) << "</strong></p><p class=\"small\">API key: " << html_escape(mask_key(conn.api_key)) << "</p><p><span class=\"pill " << (ok ? "ok" : "bad") << "\">" << (ok ? "API отвечает" : "есть ошибка API") << "</span></p></section>";
+    body << "<section class=\"panel\"><h2>Баланс</h2>" << render_asset_table(assets) << "</section>";
+    body << "<section class=\"panel\"><h2>Открытые позиции</h2>" << render_positions_table(positions) << "</section>";
+    body << "<section class=\"panel\"><h2>Текущие ордера</h2>" << render_orders_table(open_orders, "Активных лимитных ордеров нет.") << "</section>";
+    body << "<section class=\"panel\"><h2>Плановые ордера</h2>" << render_orders_table(plan_orders, "Активных плановых ордеров нет.") << "</section>";
+    body << "<section class=\"panel\"><h2>TP/SL ордера</h2>" << render_orders_table(stop_orders, "Активных TP/SL ордеров нет.") << "</section>";
+    body << "<section class=\"panel\"><h2>Raw MEXC JSON</h2><p class=\"small\">Полные read-only ответы MEXC для анализа и диагностики.</p>";
+    body << "<h3>Assets</h3><pre class=\"raw\">" << html_escape(assets) << "</pre>";
+    body << "<h3>Open positions</h3><pre class=\"raw\">" << html_escape(positions) << "</pre>";
+    body << "<h3>Current orders</h3><pre class=\"raw\">" << html_escape(open_orders) << "</pre>";
+    body << "<h3>Plan orders</h3><pre class=\"raw\">" << html_escape(plan_orders) << "</pre>";
+    body << "<h3>TP/SL orders</h3><pre class=\"raw\">" << html_escape(stop_orders) << "</pre></section>";
     return layout(body.str(), flash);
 }
 
@@ -298,7 +450,7 @@ void handle_client(int fd) {
         return;
     }
 
-    if (route_path == "/" || route_path == "/bots" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
+    if (route_path == "/" || route_path == "/bots" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
         std::string out;
         if (!is_authenticated(headers)) {
             out = response(401, "MEXC M1 admin access required\n", "text/plain; charset=utf-8", {"WWW-Authenticate: Basic realm=\"MEXC M1\""});
@@ -306,6 +458,8 @@ void handle_client(int fd) {
             out = response(200, bots_page());
         } else if (method == "GET" && route_path == "/connections") {
             out = response(200, home_page());
+        } else if (method == "GET" && route_path == "/account") {
+            out = response(200, account_page());
         } else if (method == "GET" && route_path == "/bots/new") {
             out = response(200, bot_form_page(BotConfig{}));
         } else if (method == "GET" && (route_path == "/bots/view" || route_path == "/bots/edit")) {
