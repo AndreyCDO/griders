@@ -640,6 +640,7 @@ def _insert_signal_for_event(
         order_volume=order_volume,
         leverage=leverage,
         confidence=confidence,
+        strategy_settings=row,
     )
 
 
@@ -657,6 +658,7 @@ def _insert_signal(
     order_volume: float | None = None,
     leverage: int | None = None,
     confidence: float | None = None,
+    strategy_settings: dict | None = None,
 ) -> None:
     sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if status == "sent" else None
     signal_id = execute(
@@ -694,6 +696,9 @@ def _insert_signal(
             payload=payload,
             signal_id=signal_id,
             sent_at=sent_at,
+            signal_reasons=[f"MarketShok event #{event_id}", *reasons],
+            signal_confidence=confidence if confidence is not None else (0.78 if abs(float(event["move_pct"])) >= 5 else 0.7),
+            strategy_settings=strategy_settings,
         )
     _prune_user_signals(user_id)
 

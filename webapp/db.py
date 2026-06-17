@@ -401,6 +401,10 @@ def init_db() -> None:
             strategy_code VARCHAR(80) NOT NULL DEFAULT '',
             pair VARCHAR(40) NOT NULL,
             side ENUM('long','short') NOT NULL,
+            signal_confidence DECIMAL(5, 4) NULL,
+            signal_reasons JSON NULL,
+            strategy_snapshot JSON NULL,
+            grid_snapshot JSON NULL,
             sent_at TIMESTAMP NOT NULL,
             payload JSON NULL,
             expected_profits JSON NULL,
@@ -412,6 +416,16 @@ def init_db() -> None:
             credited_volume DECIMAL(24, 8) NOT NULL DEFAULT 0.00000000,
             closed_pnl DECIMAL(24, 8) NULL,
             api_entry_value DECIMAL(24, 8) NULL,
+            qty DECIMAL(24, 8) NULL,
+            avg_entry_price DECIMAL(24, 12) NULL,
+            avg_exit_price DECIMAL(24, 12) NULL,
+            roi_pct DECIMAL(14, 8) NULL,
+            r_multiple DECIMAL(14, 8) NULL,
+            outcome ENUM('win','loss','breakeven') NULL,
+            close_reason ENUM('take_profit','stop_loss','manual','unknown') NOT NULL DEFAULT 'unknown',
+            close_order_type VARCHAR(80) NOT NULL DEFAULT '',
+            hold_seconds BIGINT UNSIGNED NULL,
+            raw_closed_pnl JSON NULL,
             closed_ref VARCHAR(190) NULL,
             closed_at TIMESTAMP NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -475,6 +489,20 @@ def init_db() -> None:
             _ensure_column(cur, "ai_site_trade_deals", "active_safety_orders", "INT NOT NULL DEFAULT 0")
             _ensure_column(cur, "ai_site_trade_deals", "closed_pnl", "DECIMAL(24, 8) NULL")
             _ensure_column(cur, "ai_site_trade_deals", "api_entry_value", "DECIMAL(24, 8) NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "signal_confidence", "DECIMAL(5, 4) NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "signal_reasons", "JSON NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "strategy_snapshot", "JSON NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "grid_snapshot", "JSON NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "qty", "DECIMAL(24, 8) NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "avg_entry_price", "DECIMAL(24, 12) NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "avg_exit_price", "DECIMAL(24, 12) NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "roi_pct", "DECIMAL(14, 8) NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "r_multiple", "DECIMAL(14, 8) NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "outcome", "ENUM('win','loss','breakeven') NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "close_reason", "ENUM('take_profit','stop_loss','manual','unknown') NOT NULL DEFAULT 'unknown'")
+            _ensure_column(cur, "ai_site_trade_deals", "close_order_type", "VARCHAR(80) NOT NULL DEFAULT ''")
+            _ensure_column(cur, "ai_site_trade_deals", "hold_seconds", "BIGINT UNSIGNED NULL")
+            _ensure_column(cur, "ai_site_trade_deals", "raw_closed_pnl", "JSON NULL")
             _ensure_column(cur, "ai_user_connections", "strategy_code", "VARCHAR(80) NOT NULL DEFAULT 'grid_dca_v2'")
             _ensure_column(cur, "ai_user_strategy_settings", "connection_id", "BIGINT UNSIGNED NULL")
             _ensure_column(cur, "ai_user_strategy_settings", "max_active_deals", "INT NOT NULL DEFAULT 2")

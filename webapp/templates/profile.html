@@ -409,6 +409,47 @@
   </p>
 </section>
 
+{% if admin_trade_analysis %}
+<section class="panel admin-trade-analysis">
+  <h2>Trade outcome analysis</h2>
+  <p class="form-note">Closed deals grouped by strategy, side, and close reason. Worst PnL groups are shown first.</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Strategy</th>
+          <th>Side</th>
+          <th>Close</th>
+          <th>Deals</th>
+          <th>Winrate</th>
+          <th>Total PnL</th>
+          <th>Avg PnL</th>
+          <th>Avg ROI</th>
+          <th>Avg R</th>
+          <th>Avg hold</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in admin_trade_analysis %}
+          <tr>
+            <td><strong>{{ row.strategy_code }}</strong></td>
+            <td><span class="side {{ row.side }}">{{ row.side }}</span></td>
+            <td>{{ row.close_reason }}</td>
+            <td>{{ row.trades_count }}</td>
+            <td>{{ row.win_rate_text }}</td>
+            <td><strong class="{{ row.pnl_class }}">{{ row.total_pnl_text }} USDT</strong></td>
+            <td>{{ row.avg_pnl_text }} USDT</td>
+            <td>{{ row.avg_roi_text }}</td>
+            <td>{{ row.avg_r_text }}</td>
+            <td>{{ row.avg_hold_text }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
 <script>
   document.querySelectorAll("[data-plan-row]").forEach((row) => {
     const choices = Array.from(row.querySelectorAll("[data-plan-choice]"));

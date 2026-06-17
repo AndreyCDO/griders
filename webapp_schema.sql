@@ -8,4 +8,5 @@ FLUSH PRIVILEGES;
 -- ai_risk_pause_overrides, ai_password_resets, ai_email_verifications, ai_market_shock_events,
 -- ai_strategy_pauses, ai_strategy_pause_overrides, ai_tp_cleanup_events,
 -- ai_pair_launch_locks, ai_strategy_side_launch_locks, ai_tradingview_events,
--- ai_user_admin_stats
+-- ai_user_admin_stats, ai_admin_closed_pnl_rows, ai_user_trade_daily_stats,
+-- ai_site_trade_counter, ai_site_trade_deals, ai_site_trade_daily_stats

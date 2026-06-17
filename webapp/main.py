@@ -28,7 +28,7 @@ from .launch_guard import release_pair_launch, release_strategy_side_launch, res
 from .mailer import send_email_verification, send_password_reset, smtp_configured
 from .market_shock import handle_telegram_update
 from .tariff_bot import handle_tariff_bot_update, sync_user_tariff, tariff_sync_loop, telegram_verify_url
-from .trade_stats import process_closed_rows_for_counter, refresh_recent_daily_site_trade_stats, site_totals
+from .trade_stats import process_closed_rows_for_counter, refresh_recent_daily_site_trade_stats, site_totals, trade_analysis_summary
 from .security import (
     decrypt_secret,
     encrypt_secret,
@@ -544,6 +544,7 @@ def _profile_context(user: dict, success: str = "", error: str = "", totp_setup:
         "timezone_options": _timezone_options(),
         "admin_users": _admin_user_views(user),
         "admin_site_stats": _admin_site_stats(user),
+        "admin_trade_analysis": _admin_trade_analysis(user),
     }
 
 
@@ -558,6 +559,24 @@ def _admin_site_stats(user: dict) -> dict:
         "traded_volume": _fmt_money(totals["traded_volume"]),
         "counted_from": "08.06.2026",
     }
+
+
+def _admin_trade_analysis(user: dict) -> list[dict]:
+    if not _user_access(user)["is_admin"]:
+        return []
+    rows = []
+    for row in trade_analysis_summary():
+        rows.append({
+            **row,
+            "total_pnl_text": _fmt_money(row["total_pnl"]),
+            "avg_pnl_text": _fmt_money(row["avg_pnl"]),
+            "win_rate_text": _fmt_percent(row["win_rate"]),
+            "avg_roi_text": _fmt_percent(row["avg_roi_pct"]),
+            "avg_r_text": f"{row['avg_r_multiple']:.2f}",
+            "avg_hold_text": _fmt_duration(row["avg_hold_seconds"]),
+            "pnl_class": "positive" if row["total_pnl"] > 0 else ("negative" if row["total_pnl"] < 0 else ""),
+        })
+    return rows
 
 
 def _admin_user_views(user: dict) -> list[dict]:
@@ -2472,6 +2491,20 @@ def _fmt_monitor_number(value: float, decimals: int = 2) -> str:
 
 def _fmt_percent(value: float) -> str:
     return f"{value:.2f}%"
+
+
+def _fmt_duration(seconds: int | float | None) -> str:
+    total = int(seconds or 0)
+    if total <= 0:
+        return "—"
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
 
 
 def _deal_limit_reason(strategy: dict, counts: dict, side: str) -> str | None:

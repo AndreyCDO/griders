@@ -339,6 +339,9 @@ def _insert_signal(
             payload=payload,
             signal_id=signal_id,
             sent_at=sent_at,
+            signal_reasons=[f"TradingView GRID event #{event_id}", *reasons],
+            signal_confidence=event["confidence"],
+            strategy_settings=row,
         )
     _prune_user_signals(int(row["user_id"]))
 

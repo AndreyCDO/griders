@@ -29,6 +29,47 @@ def site_totals() -> dict:
     }
 
 
+def trade_analysis_summary() -> list[dict]:
+    rows = fetch_all(
+        """
+        SELECT
+            strategy_code,
+            side,
+            close_reason,
+            COUNT(*) AS trades_count,
+            SUM(CASE WHEN outcome='win' THEN 1 ELSE 0 END) AS wins_count,
+            SUM(CASE WHEN outcome='loss' THEN 1 ELSE 0 END) AS losses_count,
+            COALESCE(SUM(closed_pnl), 0) AS total_pnl,
+            COALESCE(AVG(closed_pnl), 0) AS avg_pnl,
+            COALESCE(AVG(roi_pct), 0) AS avg_roi_pct,
+            COALESCE(AVG(r_multiple), 0) AS avg_r_multiple,
+            COALESCE(AVG(hold_seconds), 0) AS avg_hold_seconds
+        FROM ai_site_trade_deals
+        WHERE status='closed'
+        GROUP BY strategy_code, side, close_reason
+        ORDER BY total_pnl ASC, trades_count DESC
+        LIMIT 30
+        """
+    )
+    return [
+        {
+            "strategy_code": row.get("strategy_code") or "",
+            "side": row.get("side") or "",
+            "close_reason": row.get("close_reason") or "unknown",
+            "trades_count": int(row.get("trades_count") or 0),
+            "wins_count": int(row.get("wins_count") or 0),
+            "losses_count": int(row.get("losses_count") or 0),
+            "win_rate": _safe_pct(row.get("wins_count"), row.get("trades_count")),
+            "total_pnl": _float(row.get("total_pnl")),
+            "avg_pnl": _float(row.get("avg_pnl")),
+            "avg_roi_pct": _float(row.get("avg_roi_pct")),
+            "avg_r_multiple": _float(row.get("avg_r_multiple")),
+            "avg_hold_seconds": int(_float(row.get("avg_hold_seconds"))),
+        }
+        for row in rows
+    ]
+
+
 def record_sent_webhook(
     user_id: int,
     connection_id: int | None,
@@ -40,6 +81,9 @@ def record_sent_webhook(
     payload: dict | None = None,
     signal_id: int | None = None,
     sent_at: str | None = None,
+    signal_reasons: list[str] | None = None,
+    signal_confidence: float | None = None,
+    strategy_settings: dict | None = None,
 ) -> None:
     if side not in {"long", "short"}:
         return
@@ -47,13 +91,21 @@ def record_sent_webhook(
     if sent_at < COUNTER_START_UTC:
         return
     _ensure_counter()
-    plan = _deal_plan(payload or {}, order_volume, leverage)
+    payload = payload or {}
+    plan = _deal_plan(payload, order_volume, leverage)
+    signal = _signal_snapshot(signal_id)
+    if signal:
+        if signal_reasons is None:
+            signal_reasons = _json_text_list(signal.get("reasons"))
+        if signal_confidence is None:
+            signal_confidence = _optional_float(signal.get("confidence"))
     inserted = execute(
         """
         INSERT IGNORE INTO ai_site_trade_deals
-        (signal_id, user_id, connection_id, strategy_code, pair, side, status, sent_at,
-         payload, expected_profits, planned_volumes, full_volume, active_safety_orders)
-        VALUES (%s, %s, %s, %s, %s, %s, 'open', %s, %s, %s, %s, %s, %s)
+        (signal_id, user_id, connection_id, strategy_code, pair, side, signal_confidence,
+         signal_reasons, strategy_snapshot, grid_snapshot, status, sent_at, payload,
+         expected_profits, planned_volumes, full_volume, active_safety_orders)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open', %s, %s, %s, %s, %s, %s)
         """,
         (
             signal_id,
@@ -62,8 +114,12 @@ def record_sent_webhook(
             strategy_code,
             pair.upper(),
             side,
+            signal_confidence,
+            json.dumps(signal_reasons or [], ensure_ascii=False),
+            json.dumps(_strategy_snapshot(strategy_settings), ensure_ascii=False),
+            json.dumps(_grid_snapshot(payload), ensure_ascii=False),
             sent_at,
-            json.dumps(payload or {}, ensure_ascii=False),
+            json.dumps(payload, ensure_ascii=False),
             json.dumps(plan["expected_profits"], ensure_ascii=False),
             json.dumps(plan["planned_volumes"], ensure_ascii=False),
             plan["full_volume"],
@@ -113,6 +169,11 @@ def process_closed_rows_for_counter(user_id: int, connection_id: int | None, clo
             continue
         pnl = _float(row.get("closedPnl"))
         safety_orders, volume = _infer_safety_orders(deal, pnl)
+        entry_value = _closed_entry_value(row)
+        closed_dt = _parse_mysql_datetime(closed_at)
+        sent_dt = _parse_mysql_datetime(str(deal.get("sent_at") or ""))
+        hold_seconds = _hold_seconds(sent_dt, closed_dt)
+        r_multiple = _r_multiple(deal, safety_orders, pnl)
         updated = execute(
             """
             UPDATE ai_site_trade_deals
@@ -121,6 +182,16 @@ def process_closed_rows_for_counter(user_id: int, connection_id: int | None, clo
                 closed_ref=%s,
                 closed_pnl=%s,
                 api_entry_value=%s,
+                qty=%s,
+                avg_entry_price=%s,
+                avg_exit_price=%s,
+                roi_pct=%s,
+                r_multiple=%s,
+                outcome=%s,
+                close_reason=%s,
+                close_order_type=%s,
+                hold_seconds=%s,
+                raw_closed_pnl=%s,
                 matched_safety_orders=%s,
                 credited_volume=%s,
                 updated_at=NOW()
@@ -130,7 +201,17 @@ def process_closed_rows_for_counter(user_id: int, connection_id: int | None, clo
                 closed_at,
                 closed_ref,
                 pnl,
-                _closed_entry_value(row),
+                entry_value,
+                _optional_float(row.get("qty")),
+                _optional_float(row.get("avgEntryPrice")),
+                _optional_float(row.get("avgExitPrice")),
+                (pnl / entry_value * 100.0) if entry_value > 0 else None,
+                r_multiple,
+                _outcome(pnl),
+                _close_reason(row, pnl),
+                str(row.get("orderType") or row.get("stopOrderType") or "")[:80],
+                hold_seconds,
+                json.dumps(row, ensure_ascii=False, default=str),
                 safety_orders,
                 volume,
                 int(deal["id"]),
@@ -257,6 +338,44 @@ def _deal_plan(payload: dict, order_volume: float | None, leverage: int | None) 
     }
 
 
+def _signal_snapshot(signal_id: int | None) -> dict | None:
+    if not signal_id:
+        return None
+    return fetch_one(
+        "SELECT confidence, reasons FROM ai_signals WHERE id=%s LIMIT 1",
+        (signal_id,),
+    )
+
+
+def _strategy_snapshot(settings_row: dict | None) -> dict:
+    if not settings_row:
+        return {}
+    keys = [
+        "strategy_code",
+        "enabled",
+        "auto_trade",
+        "risk_pct",
+        "min_order_volume",
+        "first_order_mode",
+        "leverage",
+        "max_active_deals",
+        "max_long_deals",
+        "max_short_deals",
+        "watchlist",
+    ]
+    return {key: _json_safe_value(settings_row.get(key)) for key in keys if key in settings_row}
+
+
+def _grid_snapshot(payload: dict) -> dict:
+    params = payload.get("params") if isinstance(payload, dict) else {}
+    params = params if isinstance(params, dict) else {}
+    return {
+        "open": params.get("open") if isinstance(params.get("open"), dict) else {},
+        "dca": params.get("dca") if isinstance(params.get("dca"), dict) else {},
+        "close": params.get("close") if isinstance(params.get("close"), dict) else {},
+    }
+
+
 def _infer_safety_orders(deal: dict, pnl: float) -> tuple[int, float]:
     planned_volumes = _json_list(deal.get("planned_volumes"))
     expected_profits = _json_list(deal.get("expected_profits"))
@@ -271,6 +390,37 @@ def _infer_safety_orders(deal: dict, pnl: float) -> tuple[int, float]:
     size = min(len(expected_profits), len(planned_volumes))
     idx = min(range(size), key=lambda index: abs(float(expected_profits[index]) - pnl))
     return idx, float(planned_volumes[idx])
+
+
+def _r_multiple(deal: dict, safety_orders: int, pnl: float) -> float | None:
+    expected_profits = _json_list(deal.get("expected_profits"))
+    if not expected_profits:
+        return None
+    idx = min(max(0, safety_orders), len(expected_profits) - 1)
+    expected = abs(float(expected_profits[idx]))
+    return pnl / expected if expected > 0 else None
+
+
+def _outcome(pnl: float) -> str:
+    if pnl > 0:
+        return "win"
+    if pnl < 0:
+        return "loss"
+    return "breakeven"
+
+
+def _close_reason(row: dict, pnl: float) -> str:
+    stop_type = str(row.get("stopOrderType") or "").lower()
+    order_type = str(row.get("orderType") or "").lower()
+    if "take" in stop_type and "profit" in stop_type:
+        return "take_profit"
+    if "stop" in stop_type or "loss" in stop_type:
+        return "stop_loss"
+    if pnl > 0 and order_type == "limit":
+        return "take_profit"
+    if pnl < 0 and order_type == "market":
+        return "stop_loss"
+    return "manual" if order_type else "unknown"
 
 
 def _position_side_from_closed_row(row: dict) -> str:
@@ -294,6 +444,22 @@ def _ms_to_mysql_datetime(value) -> str:
     if ms <= 0:
         return ""
     return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_mysql_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value)).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _hold_seconds(sent_at: datetime | None, closed_at: datetime | None) -> int | None:
+    if not sent_at or not closed_at:
+        return None
+    seconds = int((closed_at - sent_at).total_seconds())
+    return seconds if seconds >= 0 else None
 
 
 def _closed_entry_value(row: dict) -> float:
@@ -341,6 +507,34 @@ def _json_list(value) -> list[float]:
         return [float(item) for item in items]
     except Exception:
         return []
+
+
+def _json_text_list(value) -> list[str]:
+    try:
+        items = json.loads(value or "[]") if isinstance(value, str) else (value or [])
+        return [str(item) for item in items]
+    except Exception:
+        return []
+
+
+def _json_safe_value(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
+
+
+def _optional_float(value: object) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_pct(part: object, total: object) -> float:
+    total_float = _float(total)
+    return (_float(part) / total_float * 100.0) if total_float > 0 else 0.0
 
 
 def _float(value: object) -> float:

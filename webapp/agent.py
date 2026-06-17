@@ -252,6 +252,7 @@ async def _scan_user_strategy(row: dict) -> None:
             error=error,
             order_volume=volume,
             leverage=int(row["leverage"]),
+            strategy_settings=row,
         )
 
 
@@ -340,6 +341,7 @@ def _insert_signal(
     error: str | None = None,
     order_volume: float | None = None,
     leverage: int | None = None,
+    strategy_settings: dict | None = None,
 ) -> None:
     sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if status == "sent" else None
     signal_id = execute(
@@ -377,6 +379,9 @@ def _insert_signal(
             payload=payload,
             signal_id=signal_id,
             sent_at=sent_at,
+            signal_reasons=reasons,
+            signal_confidence=confidence,
+            strategy_settings=strategy_settings,
         )
     _prune_user_signals(user_id)
 
