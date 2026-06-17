@@ -332,6 +332,12 @@ bool mexc_response_success(const std::string& response) {
     return false;
 }
 
+bool mexc_order_endpoint_blocked(const std::string& response) {
+    return response.find("Access Denied") != std::string::npos
+        || response.find("order/submit") != std::string::npos
+        || response.find("Under maintenance") != std::string::npos;
+}
+
 std::string render_plan_table(const BotPlan& plan) {
     std::ostringstream body;
     if (!plan.errors.empty()) {
@@ -365,12 +371,14 @@ std::string execute_plan(const BotPlan& plan, bool live) {
     std::ostringstream orders_json;
     bool all_ok = true;
     bool first_order_ok = !live;
+    bool order_endpoint_blocked = false;
     bool first = true;
     for (const auto& order : plan.orders) {
         std::string body = mexc_order_body(order, plan.spec);
         std::string response = live ? mexc_post_private(conn, "/api/v1/private/order/submit", body) : "{\"dryRun\":true}";
         append_bot_log(order.label + " " + body + " => " + response.substr(0, 800));
         bool order_ok = !live || mexc_response_success(response);
+        if (live && !order_ok && mexc_order_endpoint_blocked(response)) order_endpoint_blocked = true;
         if (order.label == "first market") first_order_ok = order_ok;
         if (!order_ok) all_ok = false;
         if (!first) orders_json << ",";
@@ -381,7 +389,11 @@ std::string execute_plan(const BotPlan& plan, bool live) {
     if (live && first_order_ok) register_active_run(plan);
     std::ostringstream result;
     result << "{\"ok\":" << (all_ok ? "true" : "false") << ",\"live\":" << (live ? "true" : "false");
-    if (!all_ok) result << ",\"error\":\"one or more MEXC requests failed\"";
+    if (!all_ok && order_endpoint_blocked) {
+        result << ",\"error\":\"MEXC private order endpoint returned Access Denied; order submit appears unavailable from this server/API path\"";
+    } else if (!all_ok) {
+        result << ",\"error\":\"one or more MEXC requests failed\"";
+    }
     result << ",\"orders\":[" << orders_json.str() << "]}";
     return result.str();
 }
