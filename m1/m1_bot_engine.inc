@@ -303,6 +303,19 @@ void position_manager_loop() {
     }
 }
 
+void sync_position_protection_soon() {
+    for (int attempt = 0; attempt < 6; ++attempt) {
+        try {
+            position_manager_once();
+        } catch (const std::exception& ex) {
+            append_bot_log(std::string("immediate protection exception: ") + ex.what());
+        } catch (...) {
+            append_bot_log("immediate protection unknown exception");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    }
+}
+
 std::string mexc_order_body(const PlannedOrder& order, const ContractSpec& spec) {
     std::ostringstream body;
     body << "{";
@@ -385,7 +398,10 @@ std::string execute_plan(const BotPlan& plan, bool live) {
         orders_json << "{\"label\":\"" << json_escape(order.label) << "\",\"ok\":" << (order_ok ? "true" : "false") << ",\"request\":" << body << ",\"response\":\"" << json_escape(response.substr(0, 800)) << "\"}";
         if (live && order.label == "first market" && !order_ok) break;
     }
-    if (live && first_order_ok) register_active_run(plan);
+    if (live && first_order_ok) {
+        register_active_run(plan);
+        sync_position_protection_soon();
+    }
     std::ostringstream result;
     result << "{\"ok\":" << (all_ok ? "true" : "false") << ",\"live\":" << (live ? "true" : "false");
     if (!all_ok && order_endpoint_blocked) {
