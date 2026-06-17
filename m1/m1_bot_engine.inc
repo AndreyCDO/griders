@@ -313,8 +313,6 @@ std::string mexc_order_body(const PlannedOrder& order, const ContractSpec& spec)
     body << "\"type\":" << order.type << ",";
     body << "\"openType\":" << order.open_type << ",";
     body << "\"leverage\":" << order.leverage;
-    if (order.take_profit_price > 0) body << ",\"takeProfitPrice\":" << format_number(order.take_profit_price, spec.price_scale);
-    if (order.stop_loss_price > 0) body << ",\"stopLossPrice\":" << format_number(order.stop_loss_price, spec.price_scale);
     body << "}";
     return body.str();
 }
