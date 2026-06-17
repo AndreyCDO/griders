@@ -27,9 +27,10 @@ std::string layout(const std::string& body, const std::string& flash = "") {
     html << "label{display:grid;gap:6px;font-weight:760;margin-bottom:14px}input,textarea{min-height:42px;border:1px solid var(--line);border-radius:7px;padding:9px 11px;font:inherit}textarea{min-height:260px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}.form{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}.wide{grid-column:1/-1}.button{border:1px solid var(--accent);background:var(--accent);color:white;border-radius:7px;padding:10px 14px;font-weight:760;cursor:pointer}.secondary{background:white;color:var(--accent)}";
     html << ".flash{padding:10px 12px;border-radius:7px;background:#eaf7f1;border:1px solid #a9d9c4;color:#06785e;margin-bottom:18px}.warn{background:#fff4ef;border-color:#f0c4b1;color:var(--warn)}";
     html << "table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid var(--line);white-space:nowrap}th{font-size:12px;color:var(--muted);text-transform:uppercase}.scroll{overflow-x:auto}.pill{display:inline-flex;min-height:24px;align-items:center;padding:3px 8px;border-radius:7px;background:#eef2f5;color:var(--muted);font-size:12px;font-weight:780}.ok{background:#eaf7f1;color:#06785e}.bad{background:#f8ece8;color:#a43e1c}.fee{color:#06785e;font-weight:800}.muted{color:var(--muted)}.small{font-size:13px;color:var(--muted)}pre{white-space:pre-wrap;word-break:break-word;background:#f7faf9;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:13px}";
+    html << "details{border:1px solid var(--line);border-radius:8px;background:#fbfcfd;margin-top:10px}summary{cursor:pointer;padding:10px 12px;font-weight:800}.detail-body{padding:0 12px 12px}.raw-small{max-height:170px;overflow:auto;font-size:12px}.nowrap{white-space:nowrap}";
     html << ".metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.metric{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:var(--shadow)}.metric b{display:block;font-size:22px;line-height:1.15}.metric span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800;margin-bottom:4px}.raw{max-height:360px;overflow:auto}";
     html << "@media(max-width:860px){.grid,.form,.metric-grid{grid-template-columns:1fr}.head{display:block}h1{font-size:32px}.nav{gap:9px;margin-left:8px;flex-wrap:wrap}.top{height:auto}}";
-    html << "</style></head><body><header class=\"top\"><span class=\"mark\">M1</span><span class=\"brand\">Griders · MEXC</span><nav class=\"nav\"><a href=\"/bots\">Список ботов</a><a href=\"/account\">Аккаунт</a><a href=\"/connections\">Подключения</a></nav></header><main class=\"shell\">";
+    html << "</style></head><body><header class=\"top\"><span class=\"mark\">M1</span><span class=\"brand\">Griders · MEXC</span><nav class=\"nav\"><a href=\"/bots\">Список ботов</a><a href=\"/deals\">Сделки</a><a href=\"/account\">Аккаунт</a><a href=\"/connections\">Подключения</a></nav></header><main class=\"shell\">";
     html << "<div class=\"beta\">M1 работает отдельно от основного Griders. Торговая логика MEXC пока находится в разработке.</div>";
     if (!flash.empty()) html << flash;
     html << body << "</main></body></html>";
@@ -109,6 +110,34 @@ std::vector<std::string> json_array_objects(const std::string& array_json) {
 std::string json_value_or_dash(const std::string& object, const std::string& key) {
     std::string value = json_field(object, key);
     return value.empty() ? "—" : value;
+}
+
+std::string format_time_ms(long long timestamp_ms) {
+    if (timestamp_ms <= 0) return "-";
+    std::time_t seconds = static_cast<std::time_t>(timestamp_ms / 1000);
+    std::tm tm{};
+    localtime_r(&seconds, &tm);
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm);
+    return buffer;
+}
+
+std::string status_class(const std::string& status) {
+    if (status == "active" || status == "placed" || status == "dry_run") return "ok";
+    if (status == "failed" || status.find("error") != std::string::npos) return "bad";
+    return "";
+}
+
+std::string side_label(int side) {
+    if (side == 1 || side == 2) return "long";
+    if (side == 3 || side == 4) return "short";
+    return std::to_string(side);
+}
+
+std::string order_type_label(int type) {
+    if (type == 1) return "limit";
+    if (type == 5) return "market";
+    return std::to_string(type);
 }
 
 std::string render_asset_table(const std::string& assets) {
@@ -225,6 +254,94 @@ std::string account_page(const std::string& flash = "") {
     body << "<h3>Current orders</h3><pre class=\"raw\">" << html_escape(open_orders) << "</pre>";
     body << "<h3>Plan orders</h3><pre class=\"raw\">" << html_escape(plan_orders) << "</pre>";
     body << "<h3>TP/SL orders</h3><pre class=\"raw\">" << html_escape(stop_orders) << "</pre></section>";
+    return layout(body.str(), flash);
+}
+
+std::string render_deal_orders_table(const std::vector<DealOrder>& orders, const std::string& deal_id) {
+    std::ostringstream body;
+    body << "<div class=\"scroll\"><table><thead><tr><th>Label</th><th>Side</th><th>Type</th><th>Price</th><th>Vol</th><th>Margin</th><th>TP</th><th>SL</th><th>Status</th><th>Exchange ID</th><th>Time</th></tr></thead><tbody>";
+    int count = 0;
+    for (const auto& order : orders) {
+        if (order.deal_id != deal_id) continue;
+        ++count;
+        body << "<tr><td><strong>" << html_escape(order.label) << "</strong></td>";
+        body << "<td>" << html_escape(side_label(order.side)) << "</td>";
+        body << "<td>" << html_escape(order_type_label(order.type)) << "</td>";
+        body << "<td>" << (order.price > 0 ? format_number(order.price, 6) : "-") << "</td>";
+        body << "<td>" << format_number(order.vol, 4) << "</td>";
+        body << "<td>" << format_number(order.margin_usdt, 2) << " USDT</td>";
+        body << "<td>" << (order.take_profit_price > 0 ? format_number(order.take_profit_price, 6) : "-") << "</td>";
+        body << "<td>" << (order.stop_loss_price > 0 ? format_number(order.stop_loss_price, 6) : "-") << "</td>";
+        body << "<td><span class=\"pill " << status_class(order.status) << "\">" << html_escape(order.status) << "</span></td>";
+        body << "<td>" << html_escape(order.exchange_order_id.empty() ? "-" : order.exchange_order_id) << "</td>";
+        body << "<td>" << html_escape(format_time_ms(order.created_at)) << "</td></tr>";
+        body << "<tr><td colspan=\"11\"><details><summary>Request / response</summary><div class=\"detail-body\"><div class=\"grid\">";
+        body << "<pre class=\"raw-small\">" << html_escape(order.request_json) << "</pre>";
+        body << "<pre class=\"raw-small\">" << html_escape(order.response_json) << "</pre>";
+        body << "</div></div></details></td></tr>";
+    }
+    if (count == 0) body << "<tr><td colspan=\"11\" class=\"muted\">No orders recorded for this deal.</td></tr>";
+    body << "</tbody></table></div>";
+    return body.str();
+}
+
+std::string deals_page(const std::string& flash = "") {
+    std::vector<Deal> deals = load_deals();
+    std::vector<DealOrder> orders = load_deal_orders();
+    std::reverse(deals.begin(), deals.end());
+
+    int active = 0;
+    int live = 0;
+    int failed = 0;
+    for (const auto& deal : deals) {
+        if (deal.status == "active" || deal.status == "active_with_errors") ++active;
+        if (deal.live) ++live;
+        if (deal.status == "failed" || deal.status.find("error") != std::string::npos) ++failed;
+    }
+
+    std::ostringstream body;
+    body << "<section class=\"head\"><div><p class=\"eyebrow\">MEXC deals</p><h1>Сделки</h1><p class=\"lead\">Журнал запусков ботов: снимок настроек, статус сделки и все ордера, которые бот планировал или отправлял в MEXC.</p></div><a class=\"button secondary\" href=\"/deals\">Обновить</a></section>";
+    body << "<section class=\"metric-grid\">";
+    body << "<div class=\"metric\"><span>Total deals</span><b>" << deals.size() << "</b></div>";
+    body << "<div class=\"metric\"><span>Active</span><b>" << active << "</b></div>";
+    body << "<div class=\"metric\"><span>Live</span><b>" << live << "</b></div>";
+    body << "<div class=\"metric\"><span>Failed</span><b>" << failed << "</b></div>";
+    body << "</section>";
+
+    if (deals.empty()) {
+        body << "<section class=\"panel\"><p class=\"muted\">Сделок пока нет. Запусти dry-run или live-запуск бота, и здесь появится первая запись.</p></section>";
+        return layout(body.str(), flash);
+    }
+
+    for (const auto& deal : deals) {
+        int order_count = 0;
+        int placed_count = 0;
+        int failed_count = 0;
+        for (const auto& order : orders) {
+            if (order.deal_id != deal.deal_id) continue;
+            ++order_count;
+            if (order.status == "placed" || order.status == "dry_run") ++placed_count;
+            if (order.status == "failed") ++failed_count;
+        }
+
+        body << "<section class=\"panel\">";
+        body << "<div class=\"head\"><div><p class=\"eyebrow\">" << html_escape(deal.live ? "live" : "dry-run") << "</p>";
+        body << "<h2>" << html_escape(deal.symbol) << " · " << html_escape(deal.strategy) << "</h2>";
+        body << "<p class=\"small nowrap\">" << html_escape(deal.deal_id) << " · " << html_escape(format_time_ms(deal.created_at)) << "</p></div>";
+        body << "<span class=\"pill " << status_class(deal.status) << "\">" << html_escape(deal.status) << "</span></div>";
+        body << "<div class=\"metric-grid\">";
+        body << "<div class=\"metric\"><span>Bot</span><b>" << html_escape(deal.bot_name.empty() ? "-" : deal.bot_name) << "</b></div>";
+        body << "<div class=\"metric\"><span>Margin</span><b>" << format_number(deal.planned_margin_usdt, 2) << "</b></div>";
+        body << "<div class=\"metric\"><span>Volume</span><b>" << format_number(deal.planned_volume, 4) << "</b></div>";
+        body << "<div class=\"metric\"><span>Orders</span><b>" << placed_count << "/" << order_count << "</b></div>";
+        body << "</div>";
+        body << "<p class=\"small\">Mark price: " << format_number(deal.mark_price, 6) << " · Leverage: x" << deal.leverage << " · Open type: " << deal.open_type;
+        if (failed_count > 0) body << " · Failed orders: " << failed_count;
+        body << "</p>";
+        body << "<details open><summary>Orders</summary><div class=\"detail-body\">" << render_deal_orders_table(orders, deal.deal_id) << "</div></details>";
+        body << "<details><summary>Config snapshot</summary><div class=\"detail-body\"><pre class=\"raw\">" << html_escape(deal.config_json) << "</pre></div></details>";
+        body << "</section>";
+    }
     return layout(body.str(), flash);
 }
 
@@ -452,7 +569,7 @@ void handle_client(int fd) {
         return;
     }
 
-    if (route_path == "/" || route_path == "/bots" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
+    if (route_path == "/" || route_path == "/bots" || route_path == "/deals" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
         std::string out;
         if (!is_authenticated(headers)) {
             out = response(401, "MEXC M1 admin access required\n", "text/plain; charset=utf-8", {"WWW-Authenticate: Basic realm=\"MEXC M1\""});
@@ -462,6 +579,8 @@ void handle_client(int fd) {
             out = response(200, home_page());
         } else if (method == "GET" && route_path == "/account") {
             out = response(200, account_page());
+        } else if (method == "GET" && route_path == "/deals") {
+            out = response(200, deals_page());
         } else if (method == "GET" && route_path == "/bots/new") {
             out = response(200, bot_form_page(BotConfig{}));
         } else if (method == "GET" && (route_path == "/bots/view" || route_path == "/bots/edit")) {
