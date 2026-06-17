@@ -38,9 +38,8 @@ std::string layout(const std::string& body, const std::string& flash = "") {
 
 std::string home_page(const std::string& flash = "") {
     MexcConnection conn = load_connection();
-    std::vector<MarketRow> rows = market_rows();
-    int zero_both = 0;
-    for (const auto& row : rows) if (row.exists && row.api_allowed && row.zero_maker && row.zero_taker) zero_both++;
+    std::vector<MarketRow> rows = personal_zero_fee_rows(conn);
+    int zero_both = static_cast<int>(rows.size());
 
     std::ostringstream body;
     body << "<section class=\"head\"><div><p class=\"eyebrow\">MEXC M1</p><h1>Подключение к MEXC Futures</h1>";
@@ -56,8 +55,11 @@ std::string home_page(const std::string& flash = "") {
     body << "<label>API Key<input name=\"api_key\" value=\"" << html_escape(conn.api_key) << "\" autocomplete=\"off\" spellcheck=\"false\"></label>";
     body << "<label class=\"wide\">API Secret<input name=\"api_secret\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"" << (conn.api_secret.empty() ? "" : "секрет сохранён, оставьте пустым чтобы не менять") << "\"></label>";
     body << "<button class=\"button\" type=\"submit\">Сохранить</button></form></div></section>";
-    body << "<section class=\"panel\"><div class=\"head\"><div><h2>Комиссии MEXC Futures</h2><p class=\"muted\">Live-проверка contract/detail по нашим текущим парам.</p></div><span class=\"pill ok\">" << zero_both << " пар maker+taker 0%</span></div>";
+    body << "<section class=\"panel\"><div class=\"head\"><div><h2>Комиссии MEXC Futures</h2><p class=\"muted\">Пары, где для подключённого API-аккаунта MEXC сейчас realMakerFee и realTakerFee равны 0.</p></div><span class=\"pill ok\">" << zero_both << " пар maker+taker 0%</span></div>";
     body << "<div class=\"scroll\"><table><thead><tr><th>Пара</th><th>Статус</th><th>API</th><th>Maker</th><th>Taker</th><th>Плечо</th><th>Мин. объём</th></tr></thead><tbody>";
+    if (rows.empty()) {
+        body << "<tr><td colspan=\"7\" class=\"muted\">Для подключённого аккаунта не найдено пар с maker+taker 0% или MEXC API сейчас не вернул комиссии.</td></tr>";
+    }
     for (const auto& row : rows) {
         body << "<tr><td><strong>" << row.symbol << "</strong></td><td>";
         if (row.exists) body << "<span class=\"pill ok\">" << row.state << "</span>"; else body << "<span class=\"pill bad\">не найдено</span>";
@@ -67,7 +69,7 @@ std::string home_page(const std::string& flash = "") {
         body << "<td>" << html_escape(row.max_leverage) << "</td><td>" << html_escape(row.min_vol) << "</td></tr>";
     }
     body << "</tbody></table></div>";
-    body << "<p class=\"small\">Сейчас BTC_USDT и ETH_USDT обычно имеют maker 0%, но taker 0.02%. TON_USDT и FIL_USDT в MEXC futures contract/detail не найдены.</p></section>";
+    body << "<p class=\"small\">Список основан на персональном endpoint tiered_fee_rate/v2. Публичный zero-fee список MEXC может отличаться от фактической комиссии твоего API-аккаунта.</p></section>";
     body << "<section class=\"panel\"><div class=\"head\"><div><h2>Ghost Bot JSON для MEXC</h2><p class=\"muted\">Формат совместим с Cryptorg hook: action=open, strategy long/short, pairs, open, dca, close, stop. Предпросмотр не отправляет ордера.</p></div><span class=\"pill bad\">live осторожно</span></div>";
     body << "<form method=\"post\" action=\"/bot/preview\"><label class=\"wide\">JSON команда<textarea name=\"payload\" spellcheck=\"false\">" << html_escape(default_bot_json()) << "</textarea></label><button class=\"button secondary\" type=\"submit\">Показать план</button></form>";
     body << "<form method=\"post\" action=\"/bot/run\" style=\"margin-top:12px\"><label class=\"wide\">JSON команда для запуска<textarea name=\"payload\" spellcheck=\"false\">" << html_escape(default_bot_json()) << "</textarea></label><label style=\"display:flex;gap:8px;align-items:center;font-weight:700\"><input type=\"checkbox\" name=\"live\" value=\"1\" style=\"min-height:0;width:auto\"> Отправить ордера в MEXC</label><button class=\"button\" type=\"submit\">Запустить вручную</button></form>";

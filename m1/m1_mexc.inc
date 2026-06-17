@@ -315,6 +315,38 @@ std::vector<MarketRow> market_rows() {
     return rows;
 }
 
+std::vector<MarketRow> personal_zero_fee_rows(const MexcConnection& conn) {
+    std::vector<MarketRow> rows;
+    if (conn.api_key.empty() || conn.api_secret.empty()) return rows;
+    for (const std::string& symbol : kPersonalZeroFeeCandidates) {
+        std::string response = mexc_get_private(conn, "/api/v1/private/account/tiered_fee_rate/v2", "symbol=" + symbol);
+        std::string data = json_object_field(response, "data");
+        if (data.empty()) continue;
+        std::string maker = json_field(data, "realMakerFee");
+        std::string taker = json_field(data, "realTakerFee");
+        bool zero_maker = !maker.empty() && std::atof(maker.c_str()) == 0.0;
+        bool zero_taker = !taker.empty() && std::atof(taker.c_str()) == 0.0;
+        if (!zero_maker || !zero_taker) continue;
+
+        MarketRow row;
+        row.symbol = symbol;
+        row.exists = true;
+        row.zero_maker = true;
+        row.zero_taker = true;
+        row.maker_fee = format_fee(maker);
+        row.taker_fee = format_fee(taker);
+        row.state = json_field(data, "feeRateType");
+        if (row.state.empty()) row.state = json_field(data, "feeRateMode");
+        if (row.state.empty()) row.state = "personal";
+        row.max_leverage = json_field(data, "maxLeverage");
+        ContractSpec spec = contract_spec(symbol);
+        row.api_allowed = !spec.exists || spec.api_allowed;
+        row.min_vol = spec.exists ? format_number(spec.min_vol, spec.vol_scale) : "—";
+        rows.push_back(row);
+    }
+    return rows;
+}
+
 std::vector<std::string> all_contract_symbols() {
     static std::vector<std::string> cached;
     static long long cached_at = 0;

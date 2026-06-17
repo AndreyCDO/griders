@@ -136,6 +136,12 @@ const std::vector<std::string> kTrackedPairs = {
     "ENA_USDT", "LINK_USDT", "AVAX_USDT", "JUP_USDT", "ARB_USDT",
 };
 
+const std::vector<std::string> kPersonalZeroFeeCandidates = {
+    "ABTCSTOCK_USDT", "AI16Z_USDT", "BLSHSTOCK_USDT", "ETHWSTOCK_USDT",
+    "HIFI_USDT", "ICGSTOCK_USDT", "KBBB_USDT", "MOONPIG_USDT",
+    "NEIROETH_USDT", "TRONSTOCK_USDT",
+};
+
 std::string normalize_symbol(std::string value);
 std::string compact_symbol(const std::string& symbol);
 std::string format_number(double value, int scale);
