@@ -378,6 +378,131 @@ std::string append_manual_deal_order(const Deal& deal, const std::string& label,
     return response;
 }
 
+std::string order_state_label(int state) {
+    if (state == 1) return "open";
+    if (state == 2) return "filled";
+    if (state == 3) return "canceled";
+    if (state == 4) return "partially_filled";
+    if (state == 5) return "partially_canceled";
+    return state > 0 ? "state_" + std::to_string(state) : "";
+}
+
+std::string object_order_id(const std::string& object) {
+    std::string id = json_field(object, "orderId");
+    if (id.empty()) id = json_field(object, "id");
+    return id;
+}
+
+std::string find_order_object_by_id(const std::vector<std::string>& objects, const std::string& order_id) {
+    if (order_id.empty()) return "";
+    for (const auto& object : objects) {
+        if (object_order_id(object) == order_id) return object;
+    }
+    return "";
+}
+
+std::string find_deal_object_by_order_id(const std::vector<std::string>& objects, const std::string& order_id) {
+    if (order_id.empty()) return "";
+    for (const auto& object : objects) {
+        if (json_field(object, "orderId") == order_id) return object;
+    }
+    return "";
+}
+
+void apply_exchange_order_object(DealOrder& order, const std::string& object) {
+    if (object.empty()) return;
+    int state = json_int_field(object, "state", order.exchange_state);
+    if (state > 0) {
+        order.exchange_state = state;
+        std::string label = order_state_label(state);
+        if (!label.empty()) order.status = label;
+    }
+    order.deal_avg_price = json_double_field(object, "dealAvgPrice", order.deal_avg_price);
+    order.deal_vol = json_double_field(object, "dealVol", order.deal_vol);
+    double taker_fee = json_double_field(object, "takerFee", 0.0);
+    double maker_fee = json_double_field(object, "makerFee", 0.0);
+    double direct_fee = json_double_field(object, "fee", 0.0);
+    order.fee = direct_fee != 0.0 ? direct_fee : taker_fee + maker_fee;
+    order.profit = json_double_field(object, "profit", order.profit);
+    std::string fee_currency = json_field(object, "feeCurrency");
+    if (!fee_currency.empty()) order.fee_currency = fee_currency;
+    order.exchange_json = object.substr(0, 1200);
+    order.updated_at = now_ms();
+}
+
+bool deal_has_open_position(const std::string& positions_json, const Deal& deal) {
+    return !position_object_for_deal(positions_json, deal).empty();
+}
+
+std::string sync_deals_from_mexc() {
+    MexcConnection conn = load_connection();
+    if (conn.api_key.empty() || conn.api_secret.empty()) return "{\"ok\":false,\"error\":\"MEXC API key/secret not configured\"}";
+    std::vector<Deal> deals = load_deals();
+    std::vector<DealOrder> orders = load_deal_orders();
+    long long now = now_ms();
+    long long start = now - 14LL * 24 * 60 * 60 * 1000;
+    std::string positions = mexc_get_private(conn, "/api/v1/private/position/open_positions");
+
+    std::vector<std::string> symbols;
+    for (const auto& deal : deals) {
+        std::string symbol = normalize_symbol(deal.symbol);
+        if (!symbol.empty() && std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) symbols.push_back(symbol);
+    }
+
+    int updated_orders = 0;
+    int updated_deals = 0;
+    for (const auto& symbol : symbols) {
+        std::string open_json = mexc_get_private(conn, "/api/v1/private/order/list/open_orders", "page_num=1&page_size=100&symbol=" + symbol);
+        std::string history_json = mexc_get_private(conn, "/api/v1/private/order/list/history_orders", "end_time=" + std::to_string(now) + "&page_num=1&page_size=100&start_time=" + std::to_string(start) + "&symbol=" + symbol);
+        std::string deals_json = mexc_get_private(conn, "/api/v1/private/order/list/order_deals", "end_time=" + std::to_string(now) + "&page_num=1&page_size=100&start_time=" + std::to_string(start) + "&symbol=" + symbol);
+        std::vector<std::string> exchange_orders = flat_json_objects(open_json);
+        std::vector<std::string> history_orders = flat_json_objects(history_json);
+        exchange_orders.insert(exchange_orders.end(), history_orders.begin(), history_orders.end());
+        std::vector<std::string> exchange_deals = flat_json_objects(deals_json);
+
+        for (auto& order : orders) {
+            if (normalize_symbol(order.symbol) != symbol || order.exchange_order_id.empty()) continue;
+            std::string object = find_order_object_by_id(exchange_orders, order.exchange_order_id);
+            std::string fill_object = find_deal_object_by_order_id(exchange_deals, order.exchange_order_id);
+            if (!object.empty()) {
+                apply_exchange_order_object(order, object);
+                ++updated_orders;
+            }
+            if (!fill_object.empty()) {
+                double fee = json_double_field(fill_object, "fee", 0.0);
+                double profit = json_double_field(fill_object, "profit", order.profit);
+                if (fee != 0.0) order.fee = fee;
+                order.profit = profit;
+                order.exchange_json = fill_object.substr(0, 1200);
+                order.updated_at = now_ms();
+                ++updated_orders;
+            }
+        }
+    }
+
+    for (auto& deal : deals) {
+        if (!deal.live) continue;
+        if (deal.status == "released" || deal.status == "force_closed" || deal.status == "closed_no_position" || deal.status == "failed") continue;
+        bool has_position = deal_has_open_position(positions, deal);
+        if (!has_position && deal.status != "closed") {
+            deal.status = "closed";
+            deal.updated_at = now_ms();
+            ++updated_deals;
+        } else if (has_position && deal.status == "opening") {
+            deal.status = "active";
+            deal.updated_at = now_ms();
+            ++updated_deals;
+        }
+    }
+
+    save_deal_orders(orders);
+    save_deals(deals);
+    append_bot_log("deal sync updated_orders=" + std::to_string(updated_orders) + " updated_deals=" + std::to_string(updated_deals));
+    std::ostringstream result;
+    result << "{\"ok\":true,\"orders\":" << updated_orders << ",\"deals\":" << updated_deals << ",\"symbols\":" << symbols.size() << "}";
+    return result.str();
+}
+
 std::string release_deal(const std::string& deal_id) {
     std::vector<Deal> deals = load_deals();
     auto it = std::find_if(deals.begin(), deals.end(), [&](const Deal& deal) { return deal.deal_id == deal_id; });

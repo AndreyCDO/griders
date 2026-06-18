@@ -123,8 +123,8 @@ std::string format_time_ms(long long timestamp_ms) {
 }
 
 std::string status_class(const std::string& status) {
-    if (status == "active" || status == "placed" || status == "dry_run") return "ok";
-    if (status == "failed" || status.find("error") != std::string::npos) return "bad";
+    if (status == "active" || status == "placed" || status == "dry_run" || status == "filled" || status == "open" || status == "closed") return "ok";
+    if (status == "failed" || status == "canceled" || status.find("error") != std::string::npos) return "bad";
     return "";
 }
 
@@ -138,6 +138,12 @@ std::string order_type_label(int type) {
     if (type == 1) return "limit";
     if (type == 5) return "market";
     return std::to_string(type);
+}
+
+std::string signed_number(double value, int scale) {
+    std::string text = format_number(value, scale);
+    if (value > 0) return "+" + text;
+    return text;
 }
 
 std::string render_asset_table(const std::string& assets) {
@@ -259,7 +265,7 @@ std::string account_page(const std::string& flash = "") {
 
 std::string render_deal_orders_table(const std::vector<DealOrder>& orders, const std::string& deal_id) {
     std::ostringstream body;
-    body << "<div class=\"scroll\"><table><thead><tr><th>Label</th><th>Side</th><th>Type</th><th>Price</th><th>Vol</th><th>Margin</th><th>TP</th><th>SL</th><th>Status</th><th>Exchange ID</th><th>Time</th></tr></thead><tbody>";
+    body << "<div class=\"scroll\"><table><thead><tr><th>Label</th><th>Side</th><th>Type</th><th>Price</th><th>Vol</th><th>Filled</th><th>Avg</th><th>Fee</th><th>Profit</th><th>Status</th><th>Exchange ID</th><th>Time</th></tr></thead><tbody>";
     int count = 0;
     for (const auto& order : orders) {
         if (order.deal_id != deal_id) continue;
@@ -269,18 +275,20 @@ std::string render_deal_orders_table(const std::vector<DealOrder>& orders, const
         body << "<td>" << html_escape(order_type_label(order.type)) << "</td>";
         body << "<td>" << (order.price > 0 ? format_number(order.price, 6) : "-") << "</td>";
         body << "<td>" << format_number(order.vol, 4) << "</td>";
-        body << "<td>" << format_number(order.margin_usdt, 2) << " USDT</td>";
-        body << "<td>" << (order.take_profit_price > 0 ? format_number(order.take_profit_price, 6) : "-") << "</td>";
-        body << "<td>" << (order.stop_loss_price > 0 ? format_number(order.stop_loss_price, 6) : "-") << "</td>";
+        body << "<td>" << (order.deal_vol > 0 ? format_number(order.deal_vol, 4) : "-") << "</td>";
+        body << "<td>" << (order.deal_avg_price > 0 ? format_number(order.deal_avg_price, 6) : "-") << "</td>";
+        body << "<td>" << (order.fee != 0.0 ? format_number(order.fee, 8) + (order.fee_currency.empty() ? "" : " " + html_escape(order.fee_currency)) : "-") << "</td>";
+        body << "<td class=\"" << (order.profit >= 0 ? "fee" : "bad") << "\">" << (order.profit != 0.0 ? signed_number(order.profit, 8) : "-") << "</td>";
         body << "<td><span class=\"pill " << status_class(order.status) << "\">" << html_escape(order.status) << "</span></td>";
         body << "<td>" << html_escape(order.exchange_order_id.empty() ? "-" : order.exchange_order_id) << "</td>";
         body << "<td>" << html_escape(format_time_ms(order.created_at)) << "</td></tr>";
-        body << "<tr><td colspan=\"11\"><details><summary>Request / response</summary><div class=\"detail-body\"><div class=\"grid\">";
+        body << "<tr><td colspan=\"12\"><details><summary>Request / response / exchange</summary><div class=\"detail-body\"><div class=\"grid\">";
         body << "<pre class=\"raw-small\">" << html_escape(order.request_json) << "</pre>";
         body << "<pre class=\"raw-small\">" << html_escape(order.response_json) << "</pre>";
+        body << "<pre class=\"raw-small\">" << html_escape(order.exchange_json.empty() ? "No exchange sync data yet." : order.exchange_json) << "</pre>";
         body << "</div></div></details></td></tr>";
     }
-    if (count == 0) body << "<tr><td colspan=\"11\" class=\"muted\">No orders recorded for this deal.</td></tr>";
+    if (count == 0) body << "<tr><td colspan=\"12\" class=\"muted\">No orders recorded for this deal.</td></tr>";
     body << "</tbody></table></div>";
     return body.str();
 }
@@ -300,7 +308,7 @@ std::string deals_page(const std::string& flash = "") {
     }
 
     std::ostringstream body;
-    body << "<section class=\"head\"><div><p class=\"eyebrow\">MEXC deals</p><h1>Сделки</h1><p class=\"lead\">Журнал запусков ботов: снимок настроек, статус сделки и все ордера, которые бот планировал или отправлял в MEXC.</p></div><a class=\"button secondary\" href=\"/deals\">Обновить</a></section>";
+    body << "<section class=\"head\"><div><p class=\"eyebrow\">MEXC deals</p><h1>Сделки</h1><p class=\"lead\">Журнал запусков ботов: снимок настроек, статус сделки и все ордера, которые бот планировал или отправлял в MEXC.</p></div><div style=\"display:flex;gap:10px;flex-wrap:wrap\"><form method=\"post\" action=\"/deals/sync\"><button class=\"button\" type=\"submit\">Sync MEXC</button></form><a class=\"button secondary\" href=\"/deals\">Обновить</a></div></section>";
     body << "<section class=\"metric-grid\">";
     body << "<div class=\"metric\"><span>Total deals</span><b>" << deals.size() << "</b></div>";
     body << "<div class=\"metric\"><span>Active</span><b>" << active << "</b></div>";
@@ -317,11 +325,15 @@ std::string deals_page(const std::string& flash = "") {
         int order_count = 0;
         int placed_count = 0;
         int failed_count = 0;
+        double total_fee = 0.0;
+        double total_profit = 0.0;
         for (const auto& order : orders) {
             if (order.deal_id != deal.deal_id) continue;
             ++order_count;
             if (order.status == "placed" || order.status == "dry_run") ++placed_count;
             if (order.status == "failed") ++failed_count;
+            total_fee += order.fee;
+            total_profit += order.profit;
         }
 
         body << "<section class=\"panel\">";
@@ -333,9 +345,11 @@ std::string deals_page(const std::string& flash = "") {
         body << "<div class=\"metric\"><span>Bot</span><b>" << html_escape(deal.bot_name.empty() ? "-" : deal.bot_name) << "</b></div>";
         body << "<div class=\"metric\"><span>Margin</span><b>" << format_number(deal.planned_margin_usdt, 2) << "</b></div>";
         body << "<div class=\"metric\"><span>Volume</span><b>" << format_number(deal.planned_volume, 4) << "</b></div>";
+        body << "<div class=\"metric\"><span>PnL</span><b class=\"" << (total_profit >= 0 ? "fee" : "bad") << "\">" << (total_profit != 0.0 ? signed_number(total_profit, 6) : "-") << "</b></div>";
         body << "<div class=\"metric\"><span>Orders</span><b>" << placed_count << "/" << order_count << "</b></div>";
         body << "</div>";
         body << "<p class=\"small\">Mark price: " << format_number(deal.mark_price, 6) << " · Leverage: x" << deal.leverage << " · Open type: " << deal.open_type;
+        if (total_fee != 0.0) body << " · Fee: " << format_number(total_fee, 8);
         if (failed_count > 0) body << " · Failed orders: " << failed_count;
         body << "</p>";
         bool can_manage = deal.live && deal.status != "released" && deal.status != "force_closed" && deal.status != "closed_no_position" && deal.status != "failed";
@@ -576,7 +590,7 @@ void handle_client(int fd) {
         return;
     }
 
-    if (route_path == "/" || route_path == "/bots" || route_path == "/deals" || route_path == "/deals/release" || route_path == "/deals/force-close" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
+    if (route_path == "/" || route_path == "/bots" || route_path == "/deals" || route_path == "/deals/sync" || route_path == "/deals/release" || route_path == "/deals/force-close" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
         std::string out;
         if (!is_authenticated(headers)) {
             out = response(401, "MEXC M1 admin access required\n", "text/plain; charset=utf-8", {"WWW-Authenticate: Basic realm=\"MEXC M1\""});
@@ -588,6 +602,10 @@ void handle_client(int fd) {
             out = response(200, account_page());
         } else if (method == "GET" && route_path == "/deals") {
             out = response(200, deals_page());
+        } else if (method == "POST" && route_path == "/deals/sync") {
+            std::string result = sync_deals_from_mexc();
+            bool ok = result.find("\"ok\":true") != std::string::npos;
+            out = response(200, deals_page(std::string("<div class=\"flash ") + (ok ? "" : "warn") + "\">Sync result: " + html_escape(result) + "</div>"));
         } else if (method == "POST" && route_path == "/deals/release") {
             auto fields = parse_form(body);
             std::string result = release_deal(fields["deal_id"]);

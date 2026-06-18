@@ -165,6 +165,13 @@ struct DealOrder {
     std::string exchange_order_id;
     std::string request_json;
     std::string response_json;
+    int exchange_state = 0;
+    double deal_avg_price = 0.0;
+    double deal_vol = 0.0;
+    double fee = 0.0;
+    double profit = 0.0;
+    std::string fee_currency;
+    std::string exchange_json;
     long long created_at = 0;
     long long updated_at = 0;
 };

@@ -293,7 +293,14 @@ std::string deal_order_to_line(const DealOrder& order) {
         << url_encode(order.request_json) << '\t'
         << url_encode(order.response_json) << '\t'
         << order.created_at << '\t'
-        << order.updated_at;
+        << order.updated_at << '\t'
+        << order.exchange_state << '\t'
+        << order.deal_avg_price << '\t'
+        << order.deal_vol << '\t'
+        << order.fee << '\t'
+        << order.profit << '\t'
+        << url_encode(order.fee_currency) << '\t'
+        << url_encode(order.exchange_json);
     return out.str();
 }
 
@@ -325,6 +332,13 @@ DealOrder deal_order_from_line(const std::string& line) {
     if (parts.size() > 15) order.response_json = url_decode(parts[15]);
     if (parts.size() > 16) order.created_at = std::atoll(parts[16].c_str());
     if (parts.size() > 17) order.updated_at = std::atoll(parts[17].c_str());
+    if (parts.size() > 18) order.exchange_state = std::atoi(parts[18].c_str());
+    if (parts.size() > 19) order.deal_avg_price = std::atof(parts[19].c_str());
+    if (parts.size() > 20) order.deal_vol = std::atof(parts[20].c_str());
+    if (parts.size() > 21) order.fee = std::atof(parts[21].c_str());
+    if (parts.size() > 22) order.profit = std::atof(parts[22].c_str());
+    if (parts.size() > 23) order.fee_currency = url_decode(parts[23]);
+    if (parts.size() > 24) order.exchange_json = url_decode(parts[24]);
     return order;
 }
 
