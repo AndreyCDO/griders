@@ -4,7 +4,8 @@ GRANT ALL PRIVILEGES ON aicryptorg.* TO 'aicryptorg'@'localhost';
 FLUSH PRIVILEGES;
 
 -- The app creates these prefixed tables automatically on first start:
--- ai_users (role: admin/user, plan: free/premium), ai_user_connections, ai_user_strategy_settings, ai_signals,
+-- ai_users (role: admin/user, plan: free/premium), ai_registration_attempts,
+-- ai_user_connections, ai_user_strategy_settings, ai_signals,
 -- ai_risk_pause_overrides, ai_password_resets, ai_email_verifications, ai_market_shock_events,
 -- ai_strategy_pauses, ai_strategy_pause_overrides, ai_tp_cleanup_events,
 -- ai_pair_launch_locks, ai_strategy_side_launch_locks, ai_tradingview_events,

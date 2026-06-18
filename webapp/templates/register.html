@@ -5,8 +5,18 @@
   <form class="auth-box" method="post" action="/register">
     <h1>{{ ui.auth.register_title }}</h1>
     {% if error %}<p class="alert">{{ error }}</p>{% endif %}
-    <label>{{ ui.auth.email }}<input name="email" type="email" required autocomplete="email"></label>
+    <label>{{ ui.auth.email }}<input name="email" type="email" required autocomplete="email" value="{{ email or '' }}"></label>
     <label>{{ ui.auth.password }}<input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+    <div class="bot-trap" aria-hidden="true">
+      <label>Website<input name="company_website" tabindex="-1" autocomplete="off"></label>
+    </div>
+    <input type="hidden" name="registration_token" value="{{ registration_challenge.token }}">
+    <input type="hidden" name="registration_started_at" value="{{ registration_challenge.started_at }}">
+    <label>
+      {{ "Проверка" if lang == "ru" else "Check" }}
+      <span class="field-help">{{ "Сколько будет" if lang == "ru" else "What is" }} {{ registration_challenge.question }}?</span>
+      <input name="registration_answer" inputmode="numeric" autocomplete="off" required>
+    </label>
     <label class="checkbox-row legal-checkbox">
       <input name="personal_data_consent" type="checkbox" value="yes" required>
       <span>

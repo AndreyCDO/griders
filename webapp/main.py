@@ -2,8 +2,12 @@
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import logging
+import secrets
+import time
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -548,6 +552,99 @@ def _profile_context(user: dict, success: str = "", error: str = "", totp_setup:
     }
 
 
+def _request_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",", 1)[0].strip()
+    if forwarded:
+        return forwarded[:64]
+    return (request.client.host if request.client else "")[:64]
+
+
+def _registration_challenge() -> dict:
+    left = secrets.randbelow(8) + 2
+    right = secrets.randbelow(8) + 2
+    issued_at = int(time.time())
+    payload = json.dumps(
+        {"a": left, "b": right, "answer": left + right, "iat": issued_at, "nonce": secrets.token_hex(8)},
+        separators=(",", ":"),
+    )
+    encoded = base64.urlsafe_b64encode(payload.encode()).decode()
+    signature = hmac.new(settings.APP_SECRET.encode(), encoded.encode(), hashlib.sha256).hexdigest()
+    return {
+        "question": f"{left} + {right}",
+        "token": f"{encoded}.{signature}",
+        "started_at": str(issued_at),
+    }
+
+
+def _registration_context(request: Request, error: str = "", email: str = "") -> dict:
+    return {"error": error, "email": email, "registration_challenge": _registration_challenge()}
+
+
+def _parse_registration_token(token: str | None, max_age: int = 1800) -> dict | None:
+    if not token or "." not in token:
+        return None
+    encoded, signature = token.rsplit(".", 1)
+    expected = hmac.new(settings.APP_SECRET.encode(), encoded.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return None
+    try:
+        data = json.loads(base64.urlsafe_b64decode(encoded.encode()).decode())
+    except Exception:
+        return None
+    if int(time.time()) - int(data.get("iat", 0)) > max_age:
+        return None
+    return data
+
+
+def _record_registration_attempt(request: Request, email: str, success: bool, reason: str) -> None:
+    execute(
+        """
+        INSERT INTO ai_registration_attempts (email, ip_address, user_agent, success, reason)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (
+            email[:190],
+            _request_ip(request),
+            (request.headers.get("user-agent") or "")[:255],
+            1 if success else 0,
+            reason[:80],
+        ),
+    )
+
+
+def _registration_rate_limit_reason(request: Request, email: str) -> str:
+    ip = _request_ip(request)
+    ip_row = fetch_one(
+        """
+        SELECT COUNT(*) AS attempts
+        FROM ai_registration_attempts
+        WHERE ip_address=%s AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+        """,
+        (ip,),
+    ) or {}
+    if int(ip_row.get("attempts") or 0) >= 8:
+        return "ip_rate"
+    email_row = fetch_one(
+        """
+        SELECT COUNT(*) AS attempts
+        FROM ai_registration_attempts
+        WHERE email=%s AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+        """,
+        (email,),
+    ) or {}
+    if int(email_row.get("attempts") or 0) >= 3:
+        return "email_rate"
+    return ""
+
+
+def _registration_bot_error(request: Request) -> str:
+    return (
+        "Не удалось подтвердить, что регистрацию выполняет человек. Обновите страницу и попробуйте ещё раз."
+        if _lang(request) == "ru"
+        else "We could not verify that a human is registering. Refresh the page and try again."
+    )
+
+
 def _admin_site_stats(user: dict) -> dict:
     if not _user_access(user)["is_admin"]:
         return {}
@@ -1062,7 +1159,7 @@ async def sitemap_xml():
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
-    return render(request, "register.html")
+    return render(request, "register.html", _registration_context(request))
 
 
 @app.post("/register")
@@ -1072,19 +1169,42 @@ async def register(
     password: str = Form(...),
     personal_data_consent: str | None = Form(None),
     terms_acceptance: str | None = Form(None),
+    registration_token: str = Form(""),
+    registration_answer: str = Form(""),
+    registration_started_at: str = Form(""),
+    company_website: str = Form(""),
 ):
     email = email.strip().lower()
+    challenge = _parse_registration_token(registration_token)
+    reason = _registration_rate_limit_reason(request, email)
+    if reason:
+        _record_registration_attempt(request, email, False, reason)
+        return render(request, "register.html", _registration_context(request, _registration_bot_error(request), email), 429)
+    try:
+        started_at = int(registration_started_at or "0")
+    except ValueError:
+        started_at = 0
+    elapsed = int(time.time()) - started_at
+    if company_website.strip() or not challenge or elapsed < 3:
+        _record_registration_attempt(request, email, False, "bot_check")
+        return render(request, "register.html", _registration_context(request, _registration_bot_error(request), email), 422)
+    if "".join(ch for ch in registration_answer if ch.isdigit()) != str(challenge.get("answer")):
+        _record_registration_attempt(request, email, False, "captcha")
+        return render(request, "register.html", _registration_context(request, _registration_bot_error(request), email), 422)
     if len(password) < 8:
-        return render(request, "register.html", {"error": _t(request, "auth", "password_short")}, 422)
+        _record_registration_attempt(request, email, False, "password_short")
+        return render(request, "register.html", _registration_context(request, _t(request, "auth", "password_short"), email), 422)
     if personal_data_consent != "yes" or terms_acceptance != "yes":
         error = (
             "Для регистрации нужно дать согласие на обработку персональных данных и принять пользовательское соглашение."
             if _lang(request) == "ru"
             else "To register, you must consent to personal data processing and accept the user agreement."
         )
-        return render(request, "register.html", {"error": error}, 422)
+        _record_registration_attempt(request, email, False, "legal")
+        return render(request, "register.html", _registration_context(request, error, email), 422)
     if fetch_one("SELECT id FROM ai_users WHERE email=%s", (email,)):
-        return render(request, "register.html", {"error": _t(request, "auth", "email_exists")}, 422)
+        _record_registration_attempt(request, email, False, "email_exists")
+        return render(request, "register.html", _registration_context(request, _t(request, "auth", "email_exists"), email), 422)
     user_id = execute(
         """
         INSERT INTO ai_users
@@ -1093,6 +1213,7 @@ async def register(
         """,
         (email, hash_password(password)),
     )
+    _record_registration_attempt(request, email, True, "created")
     _ensure_strategy_defaults(user_id)
     sent = _create_email_verification(request, user_id, email)
     target = "/login?verify_sent=1" if sent else "/login?verify_warning=1"
@@ -1353,6 +1474,25 @@ async def admin_update_user_plans(request: Request):
         plan = _normalized_plan(submitted)
         execute("UPDATE ai_users SET plan=%s WHERE id=%s", (plan, user_id))
     return RedirectResponse("/profile?success=plans", status_code=303)
+
+
+@app.post("/profile/admin/users/delete")
+async def admin_delete_user(request: Request, delete_user_id: int = Form(...)):
+    user = require_user(request)
+    if isinstance(user, RedirectResponse):
+        return user
+    if not _user_access(user)["is_admin"]:
+        return RedirectResponse("/profile", status_code=303)
+    target_id = int(delete_user_id)
+    if target_id == int(user["id"]):
+        return render(request, "profile.html", _profile_context(user, error="Нельзя удалить текущий админский аккаунт."), 422)
+    target = fetch_one("SELECT id, role FROM ai_users WHERE id=%s", (target_id,))
+    if not target:
+        return RedirectResponse("/profile", status_code=303)
+    if target.get("role") == "admin":
+        return render(request, "profile.html", _profile_context(user, error="Админские аккаунты нельзя удалять из этой таблицы."), 422)
+    execute("DELETE FROM ai_users WHERE id=%s", (target_id,))
+    return RedirectResponse("/profile?success=user_deleted", status_code=303)
 
 
 @app.post("/profile/admin/users/refresh")

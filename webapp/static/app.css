@@ -312,6 +312,14 @@ select:disabled {
   color: var(--warn);
 }
 .auth-box label, .form-grid label { margin-bottom: 14px; }
+.bot-trap {
+  position: absolute;
+  left: -10000px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
 .alert { background: #fff4ef; border: 1px solid #f0c4b1; color: var(--warn); padding: 10px 12px; border-radius: 7px; }
 .alert.success { background: #eaf7f1; border-color: #a9d9c4; color: var(--accent-dark); }
 .risk-alert {

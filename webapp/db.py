@@ -106,6 +106,19 @@ def init_db() -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
+        CREATE TABLE IF NOT EXISTS ai_registration_attempts (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            email VARCHAR(190) NOT NULL DEFAULT '',
+            ip_address VARCHAR(64) NOT NULL DEFAULT '',
+            user_agent VARCHAR(255) NULL,
+            success TINYINT(1) NOT NULL DEFAULT 0,
+            reason VARCHAR(80) NOT NULL DEFAULT '',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_registration_attempts_ip_created (ip_address, created_at),
+            INDEX idx_registration_attempts_email_created (email, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
         CREATE TABLE IF NOT EXISTS ai_user_connections (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             user_id BIGINT UNSIGNED NOT NULL,
