@@ -164,6 +164,10 @@ async def _create_signal_for_row(row: dict, event: dict, event_id: int) -> None:
     if guard_reason:
         _insert_signal(row, event, event_id, "skipped", [guard_reason, *event["reasons"]], {})
         return
+    stop_guard_reason = _recent_stop_guard_reason(row, event)
+    if stop_guard_reason:
+        _insert_signal(row, event, event_id, "skipped", [stop_guard_reason, *event["reasons"]], {})
+        return
 
     active_pair_reason = _active_pair_position_reason(active_positions, event["pair"])
     if active_pair_reason:
@@ -556,33 +560,131 @@ def _deal_limit_reason(row: dict, counts: dict, side: str) -> str | None:
     return None
 
 
-def _grid_dca_guard_reason(event: dict) -> str | None:
-    side = event["side"]
-    bb_position = float(event.get("bb_position") or 50)
-    volume_ratio = float(event.get("volume_ratio") or 1)
-    candle_pct = float(event.get("candle_pct") or 0)
-    bar_move_pct = float(event.get("bar_move_pct") or 0)
-    btc_move_1 = float(event.get("btc_move_1") or 0)
-    btc_move_3 = float(event.get("btc_move_3") or 0)
-    eth_move_1 = float(event.get("eth_move_1") or 0)
-    eth_move_3 = float(event.get("eth_move_3") or 0)
-    stage = str(event.get("market_stage") or "")
+def _recent_stop_guard_reason(row: dict, event: dict) -> str | None:
+    pair_reason = _user_pair_stop_guard_reason(row, event)
+    if pair_reason:
+        return pair_reason
+    side_reason = _user_side_stop_guard_reason(row, event)
+    if side_reason:
+        return side_reason
+    return _global_pair_stop_guard_reason(event)
 
-    if side == "long":
-        if btc_move_1 <= -0.8 or eth_move_1 <= -0.8 or btc_move_3 <= -1.2 or eth_move_3 <= -1.2:
-            return "защитный фильтр GRID DCA 2.6: BTC/ETH резко падают, новые лонги временно не открываются"
-        if stage == "pullback" and bb_position < 42:
-            return "защитный фильтр GRID DCA 2.6: откат слишком глубокий для лонга, есть риск пробоя сетки"
-        if bb_position < 0 or candle_pct <= -0.7 or (bar_move_pct <= -0.7 and volume_ratio >= 1.4):
-            return "защитный фильтр GRID DCA 2.6: свеча падает против лонга на повышенном объёме"
-    if side == "short":
-        if btc_move_1 >= 0.8 or eth_move_1 >= 0.8 or btc_move_3 >= 1.2 or eth_move_3 >= 1.2:
-            return "защитный фильтр GRID DCA 2.6: BTC/ETH резко растут, новые шорты временно не открываются"
-        if stage == "pullback" and bb_position > 78:
-            return "защитный фильтр GRID DCA 2.6: откат слишком глубокий для шорта, есть риск пробоя сетки"
-        if bb_position > 100 or candle_pct >= 0.7 or (bar_move_pct >= 0.7 and volume_ratio >= 1.4):
-            return "защитный фильтр GRID DCA 2.6: свеча растёт против шорта на повышенном объёме"
-    return None
+
+def _stop_guard_minutes(hours: float) -> int:
+    return max(1, int(float(hours) * 60))
+
+
+def _stop_like_sql() -> str:
+    return """
+        (
+          close_reason='stop_loss'
+          OR (
+            closed_pnl < 0
+            AND active_safety_orders > 0
+            AND matched_safety_orders >= active_safety_orders
+          )
+        )
+    """
+
+
+def _user_pair_stop_guard_reason(row: dict, event: dict) -> str | None:
+    minutes = _stop_guard_minutes(settings.GRID_DCA_PAIR_STOP_COOLDOWN_HOURS)
+    stop = fetch_one(
+        f"""
+        SELECT closed_at, closed_pnl
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND strategy_code=%s
+          AND pair=%s
+          AND side=%s
+          AND status='closed'
+          AND closed_at >= DATE_SUB(NOW(), INTERVAL %s MINUTE)
+          AND {_stop_like_sql()}
+        ORDER BY closed_at DESC
+        LIMIT 1
+        """,
+        (
+            int(row["user_id"]),
+            int(row["connection_id"]),
+            event.get("strategy_code") or DEFAULT_STRATEGY_CODE,
+            event["pair"],
+            event["side"],
+            minutes,
+        ),
+    )
+    if not stop:
+        return None
+    return (
+        f"защитный фильтр GRID DCA: по {event['pair']} {event['side']} недавно был пробой сетки "
+        f"({stop.get('closed_pnl')} USDT, {stop.get('closed_at')}); новые входы по этой паре поставлены на паузу "
+        f"на {settings.GRID_DCA_PAIR_STOP_COOLDOWN_HOURS:g}ч"
+    )
+
+
+def _user_side_stop_guard_reason(row: dict, event: dict) -> str | None:
+    minutes = _stop_guard_minutes(settings.GRID_DCA_SIDE_STOP_COOLDOWN_HOURS)
+    threshold = max(1, int(settings.GRID_DCA_SIDE_STOP_THRESHOLD))
+    stats = fetch_one(
+        f"""
+        SELECT COUNT(*) AS stops, SUM(closed_pnl) AS pnl
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND strategy_code=%s
+          AND side=%s
+          AND status='closed'
+          AND closed_at >= DATE_SUB(NOW(), INTERVAL %s MINUTE)
+          AND {_stop_like_sql()}
+        """,
+        (
+            int(row["user_id"]),
+            int(row["connection_id"]),
+            event.get("strategy_code") or DEFAULT_STRATEGY_CODE,
+            event["side"],
+            minutes,
+        ),
+    ) or {}
+    stops = int(stats.get("stops") or 0)
+    if stops < threshold:
+        return None
+    return (
+        f"защитный фильтр GRID DCA: за последние {settings.GRID_DCA_SIDE_STOP_COOLDOWN_HOURS:g}ч "
+        f"по стороне {event['side']} было {stops} пробоя сетки, суммарный PnL {float(stats.get('pnl') or 0):.2f} USDT; "
+        "новые входы по этой стороне временно остановлены"
+    )
+
+
+def _global_pair_stop_guard_reason(event: dict) -> str | None:
+    minutes = _stop_guard_minutes(settings.GRID_DCA_GLOBAL_PAIR_STOP_COOLDOWN_HOURS)
+    threshold = max(1, int(settings.GRID_DCA_GLOBAL_PAIR_STOP_THRESHOLD))
+    stats = fetch_one(
+        f"""
+        SELECT COUNT(*) AS stops, COUNT(DISTINCT user_id) AS users, SUM(closed_pnl) AS pnl
+        FROM ai_site_trade_deals
+        WHERE strategy_code=%s
+          AND pair=%s
+          AND side=%s
+          AND status='closed'
+          AND closed_at >= DATE_SUB(NOW(), INTERVAL %s MINUTE)
+          AND {_stop_like_sql()}
+        """,
+        (
+            event.get("strategy_code") or DEFAULT_STRATEGY_CODE,
+            event["pair"],
+            event["side"],
+            minutes,
+        ),
+    ) or {}
+    stops = int(stats.get("stops") or 0)
+    if stops < threshold:
+        return None
+    return (
+        f"системная пауза GRID DCA: по {event['pair']} {event['side']} за последние "
+        f"{settings.GRID_DCA_GLOBAL_PAIR_STOP_COOLDOWN_HOURS:g}ч было {stops} пробоя сетки у "
+        f"{int(stats.get('users') or 0)} пользователей, суммарный PnL {float(stats.get('pnl') or 0):.2f} USDT; "
+        "новые входы по этой паре временно остановлены"
+    )
 
 
 def _grid_dca_guard_reason(event: dict) -> str | None:
@@ -601,6 +703,7 @@ def _grid_dca_guard_reason(event: dict) -> str | None:
     btc_move_3 = float(event.get("btc_move_3") or 0)
     eth_move_1 = float(event.get("eth_move_1") or 0)
     eth_move_3 = float(event.get("eth_move_3") or 0)
+    rsi_60m = float(event.get("rsi_60m") or 50)
     stage = str(event.get("market_stage") or "")
 
     if side == "long":
@@ -608,6 +711,8 @@ def _grid_dca_guard_reason(event: dict) -> str | None:
             return f"защитный фильтр {label}: BTC/ETH резко падают, новые лонги временно не открываются"
         if stage == "pullback" and bb_position < 42:
             return f"защитный фильтр {label}: откат слишком глубокий для лонга, есть риск пробоя сетки"
+        if stage == "pullback" and bb_position > 52 and rsi_60m >= 58:
+            return f"защитный фильтр {label}: лонг на откате пропущен, потому что цена уже в верхней части диапазона и RSI 1h высокий"
         if bb_position < 0 or candle_pct <= -adverse_candle or (bar_move_pct <= -adverse_candle and volume_ratio >= adverse_volume):
             return f"защитный фильтр {label}: свеча падает против лонга на повышенном объёме"
     if side == "short":
@@ -615,6 +720,8 @@ def _grid_dca_guard_reason(event: dict) -> str | None:
             return f"защитный фильтр {label}: BTC/ETH резко растут, новые шорты временно не открываются"
         if stage == "pullback" and bb_position > 78:
             return f"защитный фильтр {label}: откат слишком глубокий для шорта, есть риск пробоя сетки"
+        if stage == "pullback" and bb_position < 48 and rsi_60m <= 42:
+            return f"защитный фильтр {label}: шорт на откате пропущен, потому что цена уже в нижней части диапазона и RSI 1h низкий"
         if bb_position > 100 or candle_pct >= adverse_candle or (bar_move_pct >= adverse_candle and volume_ratio >= adverse_volume):
             return f"защитный фильтр {label}: свеча растёт против шорта на повышенном объёме"
     return None
