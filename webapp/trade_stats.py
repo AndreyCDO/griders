@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from .db import execute, fetch_all, fetch_one
@@ -115,13 +116,13 @@ def record_sent_webhook(
             pair.upper(),
             side,
             signal_confidence,
-            json.dumps(signal_reasons or [], ensure_ascii=False),
-            json.dumps(_strategy_snapshot(strategy_settings), ensure_ascii=False),
-            json.dumps(_grid_snapshot(payload), ensure_ascii=False),
+            _json_dumps(signal_reasons or []),
+            _json_dumps(_strategy_snapshot(strategy_settings)),
+            _json_dumps(_grid_snapshot(payload)),
             sent_at,
-            json.dumps(payload, ensure_ascii=False),
-            json.dumps(plan["expected_profits"], ensure_ascii=False),
-            json.dumps(plan["planned_volumes"], ensure_ascii=False),
+            _json_dumps(payload),
+            _json_dumps(plan["expected_profits"]),
+            _json_dumps(plan["planned_volumes"]),
             plan["full_volume"],
             plan["active_safety_orders"],
         ),
@@ -517,9 +518,19 @@ def _json_text_list(value) -> list[str]:
         return []
 
 
+def _json_dumps(value) -> str:
+    return json.dumps(_json_safe_value(value), ensure_ascii=False)
+
+
 def _json_safe_value(value):
+    if isinstance(value, Decimal):
+        return float(value)
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(item) for item in value]
     return value
 
 
