@@ -293,6 +293,108 @@ std::string render_deal_orders_table(const std::vector<DealOrder>& orders, const
     return body.str();
 }
 
+std::string deals_page(const std::string& flash);
+
+std::string json_number_array_raw(const std::string& object, const std::string& key) {
+    std::string array = json_array_field(object, key);
+    if (array.size() >= 2 && array.front() == '[' && array.back() == ']') return array.substr(1, array.size() - 2);
+    return "";
+}
+
+std::string resolution_to_mexc_interval(const std::string& resolution) {
+    if (resolution == "1") return "Min1";
+    if (resolution == "5") return "Min5";
+    if (resolution == "15") return "Min15";
+    if (resolution == "30") return "Min30";
+    if (resolution == "60") return "Min60";
+    if (resolution == "240") return "Hour4";
+    if (resolution == "1D" || resolution == "D") return "Day1";
+    return "Min15";
+}
+
+std::string chart_bars_json(const std::string& path) {
+    std::string symbol = normalize_symbol(query_param(path, "symbol"));
+    if (symbol.empty()) symbol = "XRP_USDT";
+    std::string resolution = query_param(path, "resolution");
+    std::string interval = resolution_to_mexc_interval(resolution.empty() ? "15" : resolution);
+    long long from = std::atoll(query_param(path, "from").c_str());
+    long long to = std::atoll(query_param(path, "to").c_str());
+    if (to <= 0) to = now_ms() / 1000;
+    if (from <= 0 || from >= to) from = to - 3LL * 24 * 60 * 60;
+    std::string query = "?interval=" + interval + "&start=" + std::to_string(from) + "&end=" + std::to_string(to);
+    std::string raw = mexc_get_public("/api/v1/contract/kline/" + symbol + query);
+    std::string data = json_object_field(raw, "data");
+    std::string times = json_number_array_raw(data, "time");
+    if (times.empty()) return "{\"s\":\"no_data\"}";
+    std::ostringstream out;
+    out << "{\"s\":\"ok\",\"t\":[" << times << "],\"o\":[" << json_number_array_raw(data, "open")
+        << "],\"h\":[" << json_number_array_raw(data, "high") << "],\"l\":[" << json_number_array_raw(data, "low")
+        << "],\"c\":[" << json_number_array_raw(data, "close") << "],\"v\":[" << json_number_array_raw(data, "vol") << "]}";
+    return out.str();
+}
+
+std::string js_string(const std::string& value) {
+    return json_escape(value);
+}
+
+std::string chart_levels_json(const Deal& deal, const std::vector<DealOrder>& orders) {
+    std::ostringstream out;
+    bool first = true;
+    auto add_level = [&](const std::string& label, double price, const std::string& color, const std::string& kind) {
+        if (price <= 0) return;
+        if (!first) out << ",";
+        first = false;
+        out << "{\"label\":\"" << js_string(label) << "\",\"price\":" << format_number(price, 8)
+            << ",\"color\":\"" << color << "\",\"kind\":\"" << kind << "\"}";
+    };
+    for (const auto& order : orders) {
+        if (order.deal_id != deal.deal_id) continue;
+        if (order.type == 5) {
+            double entry = order.deal_avg_price > 0 ? order.deal_avg_price : deal.mark_price;
+            add_level("Entry " + order.label, entry, "#2563eb", "entry");
+        } else {
+            add_level(order.label, order.price, "#0b8f70", "dca");
+        }
+        add_level("TP " + order.label, order.take_profit_price, "#16a34a", "tp");
+        add_level("SL " + order.label, order.stop_loss_price, "#dc2626", "sl");
+    }
+    return "[" + out.str() + "]";
+}
+
+std::string deal_chart_page(const std::string& path, const std::string& flash = "") {
+    std::string deal_id = query_param(path, "id");
+    std::vector<Deal> deals = load_deals();
+    auto it = std::find_if(deals.begin(), deals.end(), [&](const Deal& deal) { return deal.deal_id == deal_id; });
+    if (it == deals.end()) return deals_page("<div class=\"flash warn\">Deal not found.</div>");
+    Deal deal = *it;
+    std::vector<DealOrder> orders = load_deal_orders();
+    ContractSpec spec = contract_spec(normalize_symbol(deal.symbol));
+    int price_scale = spec.exists ? spec.price_scale : 6;
+    std::string levels = chart_levels_json(deal, orders);
+
+    std::ostringstream body;
+    body << "<section class=\"head\"><div><p class=\"eyebrow\">Deal chart</p><h1>" << html_escape(deal.symbol) << " · " << html_escape(deal.strategy) << "</h1><p class=\"lead\">" << html_escape(deal.deal_id) << "</p></div><a class=\"button secondary\" href=\"/deals\">К сделкам</a></section>";
+    body << "<section class=\"panel\"><div id=\"tv_chart\" style=\"height:640px;min-height:520px\"></div></section>";
+    body << "<section class=\"panel\"><h2>Уровни сделки</h2><div id=\"level_list\" class=\"scroll\"></div></section>";
+    body << "<script src=\"/charting_library/charting_library.js\"></script>";
+    body << "<script>";
+    body << "const DEAL_SYMBOL='" << js_string(normalize_symbol(deal.symbol)) << "';";
+    body << "const PRICE_SCALE=" << price_scale << ";";
+    body << "const LEVELS=" << levels << ";";
+    body << "const datafeed={onReady:cb=>setTimeout(()=>cb({supported_resolutions:['1','5','15','30','60','240','1D'],supports_marks:false,supports_timescale_marks:false,supports_time:true}),0),";
+    body << "searchSymbols:(u,e,t,cb)=>cb([]),";
+    body << "resolveSymbol:(symbol,onResolve)=>setTimeout(()=>onResolve({name:symbol,ticker:symbol,description:symbol+' MEXC Futures',type:'crypto',session:'24x7',timezone:'Etc/UTC',exchange:'MEXC',listed_exchange:'MEXC',minmov:1,pricescale:Math.pow(10,PRICE_SCALE),has_intraday:true,has_daily:true,supported_resolutions:['1','5','15','30','60','240','1D'],volume_precision:4,data_status:'streaming'}),0),";
+    body << "getBars:(info,resolution,period,onHistory,onError)=>{const from=period.from||Math.floor(Date.now()/1000)-259200;const to=period.to||Math.floor(Date.now()/1000);fetch('/chart/bars?symbol='+encodeURIComponent(info.ticker||info.name)+'&resolution='+encodeURIComponent(resolution)+'&from='+from+'&to='+to).then(r=>r.json()).then(d=>{if(d.s!=='ok'){onHistory([], {noData:true});return;}const bars=d.t.map((time,i)=>({time:time*1000,open:+d.o[i],high:+d.h[i],low:+d.l[i],close:+d.c[i],volume:+d.v[i]}));onHistory(bars,{noData:bars.length===0});}).catch(e=>onError(String(e)));},";
+    body << "subscribeBars:()=>{},unsubscribeBars:()=>{}};";
+    body << "function renderLevelList(){document.getElementById('level_list').innerHTML='<table><thead><tr><th>Level</th><th>Type</th><th>Price</th></tr></thead><tbody>'+LEVELS.map(l=>'<tr><td><strong>'+l.label+'</strong></td><td><span class=\"pill\">'+l.kind+'</span></td><td>'+l.price+'</td></tr>').join('')+'</tbody></table>';}";
+    body << "function drawLevels(chart){LEVELS.forEach(l=>{try{chart.createShape({price:l.price},{shape:'horizontal_line',text:l.label,disableSelection:true,disableSave:true,overrides:{linecolor:l.color,linewidth:2,linestyle:2,showLabel:true,textcolor:l.color}});}catch(e){console.warn('level draw failed',l,e);}});}";
+    body << "renderLevelList();";
+    body << "const widget=new TradingView.widget({symbol:DEAL_SYMBOL,interval:'15',container:'tv_chart',library_path:'/charting_library/',datafeed:datafeed,locale:'ru',autosize:true,theme:'light',disabled_features:['header_symbol_search','symbol_search_hot_key','use_localstorage_for_settings'],enabled_features:['iframe_loading_same_origin'],overrides:{'paneProperties.background':'#ffffff','paneProperties.backgroundType':'solid','mainSeriesProperties.candleStyle.upColor':'#0b8f70','mainSeriesProperties.candleStyle.downColor':'#b6471d'}});";
+    body << "widget.onChartReady(()=>drawLevels(widget.activeChart()));";
+    body << "</script>";
+    return layout(body.str(), flash);
+}
+
 std::string deals_page(const std::string& flash = "") {
     std::vector<Deal> deals = load_deals();
     std::vector<DealOrder> orders = load_deal_orders();
@@ -340,7 +442,7 @@ std::string deals_page(const std::string& flash = "") {
         body << "<div class=\"head\"><div><p class=\"eyebrow\">" << html_escape(deal.live ? "live" : "dry-run") << "</p>";
         body << "<h2>" << html_escape(deal.symbol) << " · " << html_escape(deal.strategy) << "</h2>";
         body << "<p class=\"small nowrap\">" << html_escape(deal.deal_id) << " · " << html_escape(format_time_ms(deal.created_at)) << "</p></div>";
-        body << "<span class=\"pill " << status_class(deal.status) << "\">" << html_escape(deal.status) << "</span></div>";
+        body << "<div style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\"><a class=\"button secondary\" href=\"/deals/chart?id=" << url_encode(deal.deal_id) << "\">Chart</a><span class=\"pill " << status_class(deal.status) << "\">" << html_escape(deal.status) << "</span></div></div>";
         body << "<div class=\"metric-grid\">";
         body << "<div class=\"metric\"><span>Bot</span><b>" << html_escape(deal.bot_name.empty() ? "-" : deal.bot_name) << "</b></div>";
         body << "<div class=\"metric\"><span>Margin</span><b>" << format_number(deal.planned_margin_usdt, 2) << "</b></div>";
@@ -482,6 +584,36 @@ std::string response(int status, const std::string& body, const std::string& con
     return out.str();
 }
 
+std::string content_type_for_path(const std::string& path) {
+    if (path.size() >= 3 && path.substr(path.size() - 3) == ".js") return "application/javascript; charset=utf-8";
+    if (path.size() >= 4 && path.substr(path.size() - 4) == ".css") return "text/css; charset=utf-8";
+    if (path.size() >= 5 && path.substr(path.size() - 5) == ".html") return "text/html; charset=utf-8";
+    if (path.size() >= 5 && path.substr(path.size() - 5) == ".json") return "application/json; charset=utf-8";
+    if (path.size() >= 4 && path.substr(path.size() - 4) == ".png") return "image/png";
+    if (path.size() >= 4 && path.substr(path.size() - 4) == ".svg") return "image/svg+xml";
+    if (path.size() >= 5 && path.substr(path.size() - 5) == ".woff") return "font/woff";
+    if (path.size() >= 6 && path.substr(path.size() - 6) == ".woff2") return "font/woff2";
+    return "application/octet-stream";
+}
+
+bool safe_static_path(const std::string& path) {
+    if (path.empty() || path[0] == '/' || path.find("..") != std::string::npos) return false;
+    return path.find('\\') == std::string::npos;
+}
+
+std::string static_file_response(const std::string& route_path) {
+    const std::string prefix = "/charting_library/";
+    if (route_path.rfind(prefix, 0) != 0) return response(404, "not found\n", "text/plain; charset=utf-8");
+    std::string relative = route_path.substr(prefix.size());
+    if (!safe_static_path(relative)) return response(404, "not found\n", "text/plain; charset=utf-8");
+    std::string file_path = "../charting_library/" + relative;
+    std::ifstream in(file_path, std::ios::binary);
+    if (!in) return response(404, "not found\n", "text/plain; charset=utf-8");
+    std::ostringstream body;
+    body << in.rdbuf();
+    return response(200, body.str(), content_type_for_path(relative));
+}
+
 std::string redirect(const std::string& target) {
     return response(302, "", "text/plain", {"Location: " + target});
 }
@@ -549,6 +681,30 @@ void handle_client(int fd) {
         return;
     }
 
+    if (route_path.rfind("/charting_library/", 0) == 0) {
+        std::string out;
+        if (!is_authenticated(headers)) {
+            out = response(401, "MEXC M1 admin access required\n", "text/plain; charset=utf-8", {"WWW-Authenticate: Basic realm=\"MEXC M1\""});
+        } else {
+            out = static_file_response(route_path);
+        }
+        send(fd, out.data(), out.size(), 0);
+        close(fd);
+        return;
+    }
+
+    if (method == "GET" && route_path == "/chart/bars") {
+        std::string out;
+        if (!is_authenticated(headers)) {
+            out = response(401, "MEXC M1 admin access required\n", "text/plain; charset=utf-8", {"WWW-Authenticate: Basic realm=\"MEXC M1\""});
+        } else {
+            out = response(200, chart_bars_json(path), "application/json; charset=utf-8");
+        }
+        send(fd, out.data(), out.size(), 0);
+        close(fd);
+        return;
+    }
+
     if (method == "POST" && route_path.rfind("/hook/", 0) == 0) {
         std::string secret = route_path.substr(std::string("/hook/").size());
         std::string expected = getenv_or("M1_WEBHOOK_SECRET", "");
@@ -590,7 +746,7 @@ void handle_client(int fd) {
         return;
     }
 
-    if (route_path == "/" || route_path == "/bots" || route_path == "/deals" || route_path == "/deals/sync" || route_path == "/deals/release" || route_path == "/deals/force-close" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
+    if (route_path == "/" || route_path == "/bots" || route_path == "/deals" || route_path == "/deals/chart" || route_path == "/deals/sync" || route_path == "/deals/release" || route_path == "/deals/force-close" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
         std::string out;
         if (!is_authenticated(headers)) {
             out = response(401, "MEXC M1 admin access required\n", "text/plain; charset=utf-8", {"WWW-Authenticate: Basic realm=\"MEXC M1\""});
@@ -602,6 +758,8 @@ void handle_client(int fd) {
             out = response(200, account_page());
         } else if (method == "GET" && route_path == "/deals") {
             out = response(200, deals_page());
+        } else if (method == "GET" && route_path == "/deals/chart") {
+            out = response(200, deal_chart_page(path));
         } else if (method == "POST" && route_path == "/deals/sync") {
             std::string result = sync_deals_from_mexc();
             bool ok = result.find("\"ok\":true") != std::string::npos;
