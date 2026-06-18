@@ -410,7 +410,7 @@ std::string deals_page(const std::string& flash = "") {
     }
 
     std::ostringstream body;
-    body << "<section class=\"head\"><div><p class=\"eyebrow\">MEXC deals</p><h1>Сделки</h1><p class=\"lead\">Журнал запусков ботов: снимок настроек, статус сделки и все ордера, которые бот планировал или отправлял в MEXC.</p></div><div style=\"display:flex;gap:10px;flex-wrap:wrap\"><form method=\"post\" action=\"/deals/sync\"><button class=\"button\" type=\"submit\">Sync MEXC</button></form><a class=\"button secondary\" href=\"/deals\">Обновить</a></div></section>";
+    body << "<section class=\"head\"><div><p class=\"eyebrow\">MEXC deals</p><h1>Сделки</h1><p class=\"lead\">Журнал запусков ботов: снимок настроек, статус сделки и все ордера, которые бот планировал или отправлял в MEXC.</p></div><div style=\"display:flex;gap:10px;flex-wrap:wrap\"><a class=\"button\" href=\"/deals/latest-chart\">График последней сделки</a><form method=\"post\" action=\"/deals/sync\"><button class=\"button secondary\" type=\"submit\">Sync MEXC</button></form><a class=\"button secondary\" href=\"/deals\">Обновить</a></div></section>";
     body << "<section class=\"metric-grid\">";
     body << "<div class=\"metric\"><span>Total deals</span><b>" << deals.size() << "</b></div>";
     body << "<div class=\"metric\"><span>Active</span><b>" << active << "</b></div>";
@@ -442,7 +442,7 @@ std::string deals_page(const std::string& flash = "") {
         body << "<div class=\"head\"><div><p class=\"eyebrow\">" << html_escape(deal.live ? "live" : "dry-run") << "</p>";
         body << "<h2>" << html_escape(deal.symbol) << " · " << html_escape(deal.strategy) << "</h2>";
         body << "<p class=\"small nowrap\">" << html_escape(deal.deal_id) << " · " << html_escape(format_time_ms(deal.created_at)) << "</p></div>";
-        body << "<div style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\"><a class=\"button secondary\" href=\"/deals/chart?id=" << url_encode(deal.deal_id) << "\">Chart</a><span class=\"pill " << status_class(deal.status) << "\">" << html_escape(deal.status) << "</span></div></div>";
+        body << "<div style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\"><a class=\"button\" href=\"/deals/chart?id=" << url_encode(deal.deal_id) << "\">График</a><span class=\"pill " << status_class(deal.status) << "\">" << html_escape(deal.status) << "</span></div></div>";
         body << "<div class=\"metric-grid\">";
         body << "<div class=\"metric\"><span>Bot</span><b>" << html_escape(deal.bot_name.empty() ? "-" : deal.bot_name) << "</b></div>";
         body << "<div class=\"metric\"><span>Margin</span><b>" << format_number(deal.planned_margin_usdt, 2) << "</b></div>";
@@ -746,7 +746,7 @@ void handle_client(int fd) {
         return;
     }
 
-    if (route_path == "/" || route_path == "/bots" || route_path == "/deals" || route_path == "/deals/chart" || route_path == "/deals/sync" || route_path == "/deals/release" || route_path == "/deals/force-close" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
+    if (route_path == "/" || route_path == "/bots" || route_path == "/deals" || route_path == "/deals/chart" || route_path == "/deals/latest-chart" || route_path == "/deals/sync" || route_path == "/deals/release" || route_path == "/deals/force-close" || route_path == "/bots/new" || route_path == "/bots/view" || route_path == "/bots/edit" || route_path == "/bots/launch" || route_path == "/account" || route_path == "/connections" || route_path == "/bots/save" || route_path == "/bots/run" || route_path == "/bots/delete") {
         std::string out;
         if (!is_authenticated(headers)) {
             out = response(401, "MEXC M1 admin access required\n", "text/plain; charset=utf-8", {"WWW-Authenticate: Basic realm=\"MEXC M1\""});
@@ -760,6 +760,13 @@ void handle_client(int fd) {
             out = response(200, deals_page());
         } else if (method == "GET" && route_path == "/deals/chart") {
             out = response(200, deal_chart_page(path));
+        } else if (method == "GET" && route_path == "/deals/latest-chart") {
+            std::vector<Deal> deals = load_deals();
+            if (deals.empty()) {
+                out = response(200, deals_page("<div class=\"flash warn\">Сделок пока нет.</div>"));
+            } else {
+                out = redirect("/deals/chart?id=" + url_encode(deals.back().deal_id));
+            }
         } else if (method == "POST" && route_path == "/deals/sync") {
             std::string result = sync_deals_from_mexc();
             bool ok = result.find("\"ok\":true") != std::string::npos;
