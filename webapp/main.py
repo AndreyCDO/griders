@@ -2043,9 +2043,9 @@ async def override_risk_pause(request: Request, pause_type: str = Form(""), pair
     selected_id = _selected_connection_id(request, connections)
     conn = _connection(uid, selected_id) if selected_id else None
     if pause_type == "strategy_pause" and conn:
-        pauses = _strategy_pause_views(uid, conn, ignore_override=True)
+        pauses = await _risk_pause_views(uid, conn, ignore_override=True)
         target = next((item for item in pauses if item.get("pair") == (pair or "*").upper()), None)
-        if target:
+        if target and target.get("type") == "strategy_pause":
             execute(
                 """
                 INSERT INTO ai_strategy_pause_overrides
@@ -2792,8 +2792,9 @@ async def _risk_pause_views(user_id: int, conn: dict | None, ignore_override: bo
     if not conn or not conn.get("bybit_api_key") or not conn.get("bybit_api_secret_encrypted"):
         return []
     strategy_pauses = _strategy_pause_views(user_id, conn, ignore_override=ignore_override)
-    if strategy_pauses:
-        return strategy_pauses
+    grid_stop_pauses = _grid_dca_stop_pause_views(user_id, conn, ignore_override=ignore_override)
+    if strategy_pauses or grid_stop_pauses:
+        return [*strategy_pauses, *grid_stop_pauses]
     if (conn.get("strategy_code") or settings.DEFAULT_STRATEGY_CODE) in {"market_shock_impulse_v1", "market_shock_reversal_dca_v21"}:
         return []
     generic = await _generic_risk_pause_view(user_id, conn, ignore_override=ignore_override)
@@ -2825,6 +2826,149 @@ async def _generic_risk_pause_view(user_id: int, conn: dict | None, ignore_overr
         "button_label": "Запустить стратегию сейчас",
         "remaining_label": _format_duration(int(status.get("remaining_seconds") or 0)),
     }
+
+
+def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool = False) -> list[dict]:
+    strategy_code = conn.get("strategy_code") or settings.DEFAULT_STRATEGY_CODE
+    if strategy_code not in {"grid_dca_v2", "grid_dca_v3"}:
+        return []
+    connection_id = int(conn["id"])
+    watchlist = set(_watchlist((_strategy(user_id, connection_id) or {}).get("watchlist") or ""))
+    now_ts = datetime.now(timezone.utc).timestamp()
+    pauses: list[dict] = []
+
+    for row in _grid_dca_user_pair_stop_rows(user_id, connection_id, strategy_code):
+        pair = str(row.get("pair") or "").upper()
+        if watchlist and pair not in watchlist:
+            continue
+        if not ignore_override and _strategy_pause_override_exists(user_id, connection_id, strategy_code, pair):
+            continue
+        ends_at_ts = float(row.get("last_closed_ts") or 0) + settings.GRID_DCA_PAIR_STOP_COOLDOWN_HOURS * 60 * 60
+        if ends_at_ts <= now_ts:
+            continue
+        side = str(row.get("side") or "").lower()
+        remaining = max(0, int(ends_at_ts - now_ts))
+        pauses.append({
+            "type": "strategy_pause",
+            "scope": "pair",
+            "pair": pair,
+            "title": f"Пауза пары {pair}",
+            "button_label": f"Запустить пару {pair}",
+            "reason": (
+                f"GRID DCA: по {pair} {side} недавно был пробой сетки "
+                f"({row.get('closed_pnl')} USDT). Новые входы по этой паре остановлены."
+            ),
+            "ends_at_ms": int(ends_at_ts * 1000),
+            "ends_at": datetime.fromtimestamp(ends_at_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "remaining_seconds": remaining,
+            "remaining_label": _format_duration(remaining),
+        })
+
+    for row in _grid_dca_global_pair_stop_rows(strategy_code):
+        pair = str(row.get("pair") or "").upper()
+        if watchlist and pair not in watchlist:
+            continue
+        if not ignore_override and _strategy_pause_override_exists(user_id, connection_id, strategy_code, pair):
+            continue
+        ends_at_ts = float(row.get("last_closed_ts") or 0) + settings.GRID_DCA_GLOBAL_PAIR_STOP_COOLDOWN_HOURS * 60 * 60
+        if ends_at_ts <= now_ts:
+            continue
+        side = str(row.get("side") or "").lower()
+        remaining = max(0, int(ends_at_ts - now_ts))
+        pauses.append({
+            "type": "strategy_pause",
+            "scope": "pair",
+            "pair": pair,
+            "title": f"Системная пауза {pair}",
+            "button_label": f"Запустить пару {pair}",
+            "reason": (
+                f"GRID DCA: по {pair} {side} за последние "
+                f"{settings.GRID_DCA_GLOBAL_PAIR_STOP_COOLDOWN_HOURS:g}ч было {int(row.get('stops') or 0)} "
+                f"пробоя сетки у {int(row.get('users') or 0)} пользователей, суммарный PnL "
+                f"{float(row.get('pnl') or 0):.2f} USDT. Новые входы по этой паре временно остановлены."
+            ),
+            "ends_at_ms": int(ends_at_ts * 1000),
+            "ends_at": datetime.fromtimestamp(ends_at_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "remaining_seconds": remaining,
+            "remaining_label": _format_duration(remaining),
+        })
+
+    seen: set[tuple[str, str]] = set()
+    unique = []
+    for pause in sorted(pauses, key=lambda item: int(item.get("ends_at_ms") or 0), reverse=True):
+        key = (pause.get("scope") or "", pause.get("pair") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(pause)
+    return unique
+
+
+def _grid_dca_stop_like_sql() -> str:
+    return """
+        (
+          close_reason='stop_loss'
+          OR (
+            closed_pnl < 0
+            AND active_safety_orders > 0
+            AND matched_safety_orders >= active_safety_orders
+          )
+        )
+    """
+
+
+def _grid_dca_user_pair_stop_rows(user_id: int, connection_id: int, strategy_code: str) -> list[dict]:
+    minutes = max(1, int(settings.GRID_DCA_PAIR_STOP_COOLDOWN_HOURS * 60))
+    return fetch_all(
+        f"""
+        SELECT pair, side, closed_pnl, UNIX_TIMESTAMP(closed_at) AS last_closed_ts
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND strategy_code=%s
+          AND status='closed'
+          AND closed_at >= DATE_SUB(NOW(), INTERVAL %s MINUTE)
+          AND {_grid_dca_stop_like_sql()}
+        ORDER BY closed_at DESC
+        """,
+        (user_id, connection_id, strategy_code, minutes),
+    )
+
+
+def _grid_dca_global_pair_stop_rows(strategy_code: str) -> list[dict]:
+    minutes = max(1, int(settings.GRID_DCA_GLOBAL_PAIR_STOP_COOLDOWN_HOURS * 60))
+    threshold = max(1, int(settings.GRID_DCA_GLOBAL_PAIR_STOP_THRESHOLD))
+    return fetch_all(
+        f"""
+        SELECT pair, side, COUNT(*) AS stops, COUNT(DISTINCT user_id) AS users,
+               SUM(closed_pnl) AS pnl, UNIX_TIMESTAMP(MAX(closed_at)) AS last_closed_ts
+        FROM ai_site_trade_deals
+        WHERE strategy_code=%s
+          AND status='closed'
+          AND closed_at >= DATE_SUB(NOW(), INTERVAL %s MINUTE)
+          AND {_grid_dca_stop_like_sql()}
+        GROUP BY pair, side
+        HAVING stops >= %s
+        ORDER BY last_closed_ts DESC
+        """,
+        (strategy_code, minutes, threshold),
+    )
+
+
+def _strategy_pause_override_exists(user_id: int, connection_id: int, strategy_code: str, pair: str) -> bool:
+    return bool(fetch_one(
+        """
+        SELECT id
+        FROM ai_strategy_pause_overrides
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND strategy_code=%s
+          AND pair IN (%s, '*')
+          AND override_until > NOW()
+        LIMIT 1
+        """,
+        (user_id, connection_id, strategy_code, pair),
+    ))
 
 
 def _strategy_pause_views(user_id: int, conn: dict, ignore_override: bool = False) -> list[dict]:

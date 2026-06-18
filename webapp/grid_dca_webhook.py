@@ -561,6 +561,8 @@ def _deal_limit_reason(row: dict, counts: dict, side: str) -> str | None:
 
 
 def _recent_stop_guard_reason(row: dict, event: dict) -> str | None:
+    if _strategy_pause_override_active(row, event):
+        return None
     pair_reason = _user_pair_stop_guard_reason(row, event)
     if pair_reason:
         return pair_reason
@@ -568,6 +570,27 @@ def _recent_stop_guard_reason(row: dict, event: dict) -> str | None:
     if side_reason:
         return side_reason
     return _global_pair_stop_guard_reason(event)
+
+
+def _strategy_pause_override_active(row: dict, event: dict) -> bool:
+    return bool(fetch_one(
+        """
+        SELECT id
+        FROM ai_strategy_pause_overrides
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND strategy_code=%s
+          AND pair IN (%s, '*')
+          AND override_until > NOW()
+        LIMIT 1
+        """,
+        (
+            int(row["user_id"]),
+            int(row["connection_id"]),
+            event.get("strategy_code") or DEFAULT_STRATEGY_CODE,
+            event["pair"],
+        ),
+    ))
 
 
 def _stop_guard_minutes(hours: float) -> int:
