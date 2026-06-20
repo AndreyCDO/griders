@@ -2855,8 +2855,8 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
             "title": f"Пауза пары {pair}",
             "button_label": f"Запустить пару {pair}",
             "reason": (
-                f"GRID DCA: по {pair} {side} недавно был пробой сетки "
-                f"({row.get('closed_pnl')} USDT). Новые входы по этой паре остановлены."
+                f"GRID DCA: по {pair} {side} недавно был пробой сетки. "
+                "Новые входы по этой паре временно остановлены."
             ),
             "ends_at_ms": int(ends_at_ts * 1000),
             "ends_at": datetime.fromtimestamp(ends_at_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
@@ -2882,10 +2882,8 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
             "title": f"Системная пауза {pair}",
             "button_label": f"Запустить пару {pair}",
             "reason": (
-                f"GRID DCA: по {pair} {side} за последние "
-                f"{settings.GRID_DCA_GLOBAL_PAIR_STOP_COOLDOWN_HOURS:g}ч было {int(row.get('stops') or 0)} "
-                f"пробоя сетки у {int(row.get('users') or 0)} пользователей, суммарный PnL "
-                f"{float(row.get('pnl') or 0):.2f} USDT. Новые входы по этой паре временно остановлены."
+                f"GRID DCA: по {pair} {side} был пробой сетки. "
+                "Новые входы по этой паре временно остановлены."
             ),
             "ends_at_ms": int(ends_at_ts * 1000),
             "ends_at": datetime.fromtimestamp(ends_at_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),

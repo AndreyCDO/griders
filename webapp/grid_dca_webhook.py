@@ -640,7 +640,7 @@ def _user_pair_stop_guard_reason(row: dict, event: dict) -> str | None:
         return None
     return (
         f"защитный фильтр GRID DCA: по {event['pair']} {event['side']} недавно был пробой сетки "
-        f"({stop.get('closed_pnl')} USDT, {stop.get('closed_at')}); новые входы по этой паре поставлены на паузу "
+        f"({stop.get('closed_at')}); новые входы по этой паре поставлены на паузу "
         f"на {settings.GRID_DCA_PAIR_STOP_COOLDOWN_HOURS:g}ч"
     )
 
@@ -703,9 +703,7 @@ def _global_pair_stop_guard_reason(event: dict) -> str | None:
     if stops < threshold:
         return None
     return (
-        f"системная пауза GRID DCA: по {event['pair']} {event['side']} за последние "
-        f"{settings.GRID_DCA_GLOBAL_PAIR_STOP_COOLDOWN_HOURS:g}ч было {stops} пробоя сетки у "
-        f"{int(stats.get('users') or 0)} пользователей, суммарный PnL {float(stats.get('pnl') or 0):.2f} USDT; "
+        f"системная пауза GRID DCA: по {event['pair']} {event['side']} был пробой сетки; "
         "новые входы по этой паре временно остановлены"
     )
 
