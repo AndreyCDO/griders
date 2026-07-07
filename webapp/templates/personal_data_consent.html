@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ "Согласие на обработку персональных данных" if lang == "ru" else "Personal Data Processing Consent" }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Согласие на обработку персональных данных пользователя Griders при регистрации и использовании сервиса.{% else %}Personal data processing consent for registering and using the Griders service.{% endif %}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <section class="panel legal-page">
   {% if lang == "ru" %}

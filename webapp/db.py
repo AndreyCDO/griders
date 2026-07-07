@@ -91,7 +91,8 @@ def init_db() -> None:
             telegram_verified_at TIMESTAMP NULL,
             telegram_last_checked_at TIMESTAMP NULL,
             role ENUM('admin','user') NOT NULL DEFAULT 'user',
-            plan ENUM('free','start','premium') NOT NULL DEFAULT 'free',
+            plan ENUM('free','free_plus','start','start_plus','premium','premium_plus') NOT NULL DEFAULT 'free',
+            referral_verified TINYINT(1) NOT NULL DEFAULT 0,
             password_hash VARCHAR(255) NOT NULL,
             twofa_method ENUM('none','pin','totp') NOT NULL DEFAULT 'none',
             twofa_pin_hash VARCHAR(255) NULL,
@@ -176,6 +177,13 @@ def init_db() -> None:
             error_message TEXT NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             sent_at TIMESTAMP NULL,
+            webhook_send_started_at TIMESTAMP NULL,
+            webhook_response_at TIMESTAMP NULL,
+            webhook_response_ms INT NULL,
+            position_confirmed_at TIMESTAMP NULL,
+            protective_orders_confirmed_at TIMESTAMP NULL,
+            confirmation_finished_at TIMESTAMP NULL,
+            confirmation_status VARCHAR(40) NOT NULL DEFAULT '',
             INDEX idx_user_created (user_id, created_at),
             CONSTRAINT fk_ai_signals_user FOREIGN KEY (user_id) REFERENCES ai_users(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -424,7 +432,7 @@ def init_db() -> None:
             planned_volumes JSON NULL,
             full_volume DECIMAL(24, 8) NOT NULL DEFAULT 0.00000000,
             active_safety_orders INT NOT NULL DEFAULT 0,
-            status ENUM('open','closed') NOT NULL DEFAULT 'open',
+            status ENUM('open','closed','canceled') NOT NULL DEFAULT 'open',
             matched_safety_orders INT NULL,
             credited_volume DECIMAL(24, 8) NOT NULL DEFAULT 0.00000000,
             closed_pnl DECIMAL(24, 8) NULL,
@@ -485,8 +493,24 @@ def init_db() -> None:
             _ensure_column(cur, "ai_users", "telegram_last_checked_at", "TIMESTAMP NULL")
             _ensure_column(cur, "ai_users", "tariff_free_checks", "INT NOT NULL DEFAULT 0")
             _ensure_column(cur, "ai_users", "role", "ENUM('admin','user') NOT NULL DEFAULT 'user'")
-            _ensure_column(cur, "ai_users", "plan", "ENUM('free','start','premium') NOT NULL DEFAULT 'free'")
-            cur.execute("ALTER TABLE ai_users MODIFY plan ENUM('free','start','premium') NOT NULL DEFAULT 'free'")
+            _ensure_column(cur, "ai_users", "plan", "ENUM('free','free_plus','start','start_plus','premium','premium_plus') NOT NULL DEFAULT 'free'")
+            cur.execute("ALTER TABLE ai_users MODIFY plan ENUM('free','free_plus','start','start_plus','premium','premium_plus') NOT NULL DEFAULT 'free'")
+            _ensure_column(cur, "ai_users", "referral_verified", "TINYINT(1) NOT NULL DEFAULT 0")
+            cur.execute(
+                """
+                UPDATE ai_users
+                SET referral_verified=1,
+                    plan=CASE plan
+                        WHEN 'free_plus' THEN 'free'
+                        WHEN 'start_plus' THEN 'start'
+                        WHEN 'premium_plus' THEN 'premium'
+                        ELSE plan
+                    END
+                WHERE role<>'admin'
+                  AND referral_verified=0
+                  AND plan IN ('free_plus', 'start_plus', 'premium_plus')
+                """
+            )
             _ensure_column(cur, "ai_users", "twofa_method", "ENUM('none','pin','totp') NOT NULL DEFAULT 'none'")
             _ensure_column(cur, "ai_users", "twofa_pin_hash", "VARCHAR(255) NULL")
             _ensure_column(cur, "ai_users", "twofa_totp_secret_encrypted", "TEXT NULL")
@@ -499,7 +523,12 @@ def init_db() -> None:
             _ensure_column(cur, "ai_user_admin_stats", "closed_trades_count", "BIGINT UNSIGNED NOT NULL DEFAULT 0")
             _ensure_column(cur, "ai_user_admin_stats", "closed_entry_volume", "DECIMAL(24, 8) NOT NULL DEFAULT 0.00000000")
             _ensure_column(cur, "ai_user_connections", "last_admin_closed_sync_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_user_connections", "last_positions_snapshot", "JSON NULL")
+            _ensure_column(cur, "ai_user_connections", "last_positions_checked_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_user_connections", "last_risk_pause_reason", "TEXT NULL")
+            _ensure_column(cur, "ai_user_connections", "last_risk_pause_checked_at", "TIMESTAMP NULL")
             _ensure_column(cur, "ai_site_trade_deals", "active_safety_orders", "INT NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE ai_site_trade_deals MODIFY status ENUM('open','closed','canceled') NOT NULL DEFAULT 'open'")
             _ensure_column(cur, "ai_site_trade_deals", "closed_pnl", "DECIMAL(24, 8) NULL")
             _ensure_column(cur, "ai_site_trade_deals", "api_entry_value", "DECIMAL(24, 8) NULL")
             _ensure_column(cur, "ai_site_trade_deals", "signal_confidence", "DECIMAL(5, 4) NULL")
@@ -523,6 +552,21 @@ def init_db() -> None:
             _ensure_column(cur, "ai_user_strategy_settings", "max_short_deals", "INT NOT NULL DEFAULT 1")
             _ensure_column(cur, "ai_user_strategy_settings", "first_order_mode", "ENUM('manual','deposit_pct') NOT NULL DEFAULT 'manual'")
             _ensure_column(cur, "ai_signals", "connection_id", "BIGINT UNSIGNED NULL")
+            _ensure_column(cur, "ai_signals", "webhook_send_started_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_signals", "webhook_response_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_signals", "webhook_response_ms", "INT NULL")
+            _ensure_column(cur, "ai_signals", "position_confirmed_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_signals", "protective_orders_confirmed_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_signals", "confirmation_finished_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_signals", "confirmation_status", "VARCHAR(40) NOT NULL DEFAULT ''")
+            _ensure_column(cur, "ai_tradingview_events", "processing_started_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_tradingview_events", "processing_error", "TEXT NULL")
+            _ensure_index(
+                cur,
+                "ai_tradingview_events",
+                "idx_tradingview_processing",
+                "KEY idx_tradingview_processing (processed_at, processing_started_at, created_at)",
+            )
             _ensure_column(cur, "ai_strategy_side_launch_locks", "connection_id", "BIGINT UNSIGNED NOT NULL DEFAULT 0")
             _ensure_index(
                 cur,
@@ -543,6 +587,12 @@ def init_db() -> None:
                 "ai_strategy_side_launch_locks",
                 "idx_strategy_side_launch_until",
                 "KEY idx_strategy_side_launch_until (locked_until)",
+            )
+            _ensure_index(
+                cur,
+                "ai_site_trade_deals",
+                "idx_site_trade_monitoring",
+                "KEY idx_site_trade_monitoring (status, user_id, connection_id, closed_at)",
             )
             cur.execute("ALTER TABLE ai_user_strategy_settings MODIFY watchlist TEXT NOT NULL")
             cur.execute("UPDATE ai_user_strategy_settings SET strategy_code='grid_dca_v2' WHERE strategy_code='liquid_scalp_v1'")
@@ -606,9 +656,9 @@ def init_db() -> None:
                 """
             )
             cur.execute("ALTER TABLE ai_user_strategy_settings ALTER risk_pct SET DEFAULT 2.000")
-            cur.execute("ALTER TABLE ai_user_strategy_settings ALTER max_active_deals SET DEFAULT 2")
-            cur.execute("ALTER TABLE ai_user_strategy_settings ALTER max_long_deals SET DEFAULT 1")
-            cur.execute("ALTER TABLE ai_user_strategy_settings ALTER max_short_deals SET DEFAULT 1")
+            cur.execute("ALTER TABLE ai_user_strategy_settings ALTER max_active_deals SET DEFAULT 4")
+            cur.execute("ALTER TABLE ai_user_strategy_settings ALTER max_long_deals SET DEFAULT 4")
+            cur.execute("ALTER TABLE ai_user_strategy_settings ALTER max_short_deals SET DEFAULT 4")
             cur.execute("UPDATE ai_user_strategy_settings SET leverage=10 WHERE leverage<>10")
             cur.execute(
                 """
@@ -620,7 +670,7 @@ def init_db() -> None:
             cur.execute(
                 """
                 UPDATE ai_user_strategy_settings
-                SET max_active_deals = 2, max_long_deals = 1, max_short_deals = 1
+                SET max_active_deals = 4, max_long_deals = 4, max_short_deals = 4
                 WHERE max_active_deals = 0 AND max_long_deals = 0 AND max_short_deals = 0
                 """
             )

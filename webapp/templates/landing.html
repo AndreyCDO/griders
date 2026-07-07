@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ app_name }} · {{ ui.landing.title }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Griders - сервис автотрейдинга для Cryptorg Ghost Bot: сигналы TradingView, GRID DCA, фильтры риска, мониторинг баланса и сделок в одном кабинете.{% else %}Griders is an automated trading dashboard for Cryptorg Ghost Bot with TradingView signals, GRID DCA, risk filters, balance monitoring, and deal control.{% endif %}{% endblock %}
 {% block content %}
 <section class="hero hero-simple">
   <div class="hero-copy">

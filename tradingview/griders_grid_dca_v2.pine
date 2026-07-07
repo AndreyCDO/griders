@@ -1,5 +1,5 @@
 ﻿//@version=6
-indicator("Griders GRID DCA 2.6", overlay=true, max_labels_count=500)
+indicator("Griders GRID DCA 2.8", overlay=true, max_labels_count=500)
 
 bbLength = input.int(20, "Bollinger length", minval=5, maxval=100)
 bbMult = input.float(2.0, "Bollinger multiplier", minval=0.5, step=0.1)
@@ -72,7 +72,7 @@ sideText = longSignal ? "long" : shortSignal ? "short" : "wait"
 confidence = longSignal or shortSignal ? (marketStage == "range" ? 0.68 : 0.72) : 0.0
 
 dcaStep = math.max(0.45, math.min(2.4, atrPct * (marketStage == "range" ? 0.85 : marketStage == "trend" ? 1.1 : 0.75)))
-takeProfit = math.max(0.35, math.min(1.0, dcaStep * 0.55))
+takeProfit = math.max(0.35, math.min(1.0, dcaStep * 0.55)) * 1.05
 stopLoss = math.max(marketStage == "pullback" ? 3.5 : 3.0, math.min(6.5, dcaStep * 4.0))
 
 plot(emaFast, "Fast EMA", color=color.new(color.teal, 0))
@@ -86,6 +86,7 @@ plotshape(shortSignal, "GRID DCA Short", shape.triangledown, location.abovebar, 
 makePayload(side) =>
     string payload = "{"
     payload := payload + "\"strategy\":\"grid_dca_v2\","
+    payload := payload + "\"strategy_name\":\"GRID DCA 2.8\","
     payload := payload + "\"source\":\"tradingview\","
     payload := payload + "\"signal_id\":\"" + syminfo.ticker + "-" + str.tostring(time) + "-" + side + "\","
     payload := payload + "\"pair\":\"" + syminfo.ticker + "\","
@@ -107,6 +108,7 @@ makePayload(side) =>
     payload := payload + "\"eth_move_3\":" + str.tostring(ethMove3, "#.##") + ","
     payload := payload + "\"dca_percent\":" + str.tostring(dcaStep, "#.##") + ","
     payload := payload + "\"take_profit\":" + str.tostring(takeProfit, "#.##") + ","
+    payload := payload + "\"take_profit_adjusted\":true,"
     payload := payload + "\"stop_loss\":" + str.tostring(stopLoss, "#.##") + ","
     payload := payload + "\"time\":" + str.tostring(time) + ","
     payload := payload + "\"bar_index\":" + str.tostring(bar_index)

@@ -20,7 +20,7 @@ REMOVE = {"TIAUSDT", "DOTUSDT", "DOGEUSDT"}
 EXISTING_AFTER_REMOVE = set(PAIRS) - REMOVE
 EXCLUDED_BASES = {
     "USDC", "USDE", "USD1", "USDD", "DAI", "FDUSD", "TUSD", "USDP", "EUR", "TRY",
-    "BTC", "ETH", "SOL", "HYPE", "NEAR", "ZEC", "TON", "XRP", "SUI", "TAO",
+    "BTC", "ETH", "SOL", "HYPE", "NEAR", "ZEC", "ONDO", "XRP", "SUI", "TAO",
     "RENDER", "ADA", "INJ", "ENA", "LINK", "AVAX", "ARB",
 }
 EXCLUDED_SYMBOL_PARTS = {"1000", "10000", "LUNA", "UST", "DEFI"}

@@ -2,12 +2,13 @@
 
 import hashlib
 import hmac
+import os
 import time
 from urllib.parse import urlencode
 
 import httpx
 
-RECV_WINDOW = "10000"
+RECV_WINDOW = os.getenv("BYBIT_RECV_WINDOW", "30000")
 BASE_URL = "https://api.bybit.com"
 SIGNATURE_ERROR_HELP = (
     "API вернул Error sign. Проверьте, что API key и API secret взяты из одной "

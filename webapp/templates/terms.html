@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ "Пользовательское соглашение" if lang == "ru" else "User Agreement" }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Пользовательское соглашение Griders: правила использования сервиса, тарифов, API-подключений, торговых стратегий, уведомлений и ограничений ответственности.{% else %}Griders User Agreement: terms for using the service, plans, API connections, trading strategies, notifications, and liability limitations.{% endif %}{% endblock %}
 {% block content %}
 {% if lang == "en" %}
 <section class="page-head">

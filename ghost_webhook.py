@@ -24,6 +24,12 @@ def normalize_webhook_url(url: str | None) -> str:
 def failure_message(result: dict | None) -> str | None:
     if not result or result.get("ok"):
         return None
+    error_type = str(result.get("error_type") or result.get("error") or "")
+    error_text = str(result.get("error") or error_type or "").strip()
+    if error_type in {"ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout", "TimeoutException"} or "timeout" in error_text.lower():
+        return f"Cryptorg не ответил вовремя: {error_type or error_text}"
+    if result.get("exception") and error_text:
+        return f"Ошибка соединения с Cryptorg: {error_text}"
     body = result.get("response")
     status_code = result.get("status_code")
     if isinstance(body, dict):

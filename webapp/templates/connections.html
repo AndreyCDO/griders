@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.connections.title }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Настройка подключений Griders: API-ключ Cryptorg, webhook Ghost Bot, проверка баланса и статуса торгового аккаунта.{% else %}Manage Griders connections: Cryptorg API key, Ghost Bot webhook, balance checks, and trading account status.{% endif %}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <div class="connection-video-link">
   <a href="/connection-video" target="_blank" rel="noopener noreferrer">
@@ -19,6 +21,10 @@
     </form>
   {% endif %}
 </section>
+
+{% if connection_locked %}
+  <p class="alert warning">{{ "Подключен Плюс Тариф. Смена подключения только по запросу." if lang == "ru" else "Plus plan is connected. Connection changes are available by request only." }}</p>
+{% endif %}
 
 <section class="connection-list">
   {% if connections %}
@@ -47,13 +53,13 @@
       <a class="button secondary" href="/connections?new=1">{{ ui.connections.add_new }}</a>
     {% endif %}
   </div>
-  <form class="form-grid" method="post" action="/connections" autocomplete="off" data-connection-form>
+  <form class="form-grid {% if connection_locked %}locked-form{% endif %}" method="post" action="/connections" autocomplete="off" data-connection-form data-connection-locked="{{ 1 if connection_locked else 0 }}">
     <input type="hidden" name="connection_id" value="{{ connection.id if connection else 0 }}">
     <label>{{ ui.connections.label }}
-      <input name="label" value="{{ connection.label if connection else '' }}" placeholder="{{ ui.common.main_account }}">
+      <input name="label" value="{{ connection.label if connection else '' }}" placeholder="{{ ui.common.main_account }}" {% if connection_locked %}disabled{% endif %}>
     </label>
     <label>{{ ui.connections.strategy }}
-      <select name="strategy_code" data-connection-strategy-select data-free-plan="{{ 1 if user_access.is_free else 0 }}">
+      <select name="strategy_code" data-connection-strategy-select data-free-plan="{{ 1 if user_access.is_free else 0 }}" {% if connection_locked %}disabled{% endif %}>
         {% for code, meta in strategies.items() %}
           <option value="{{ code }}" {% if connection and connection.strategy_code == code %}selected{% endif %}>{{ meta.name }}</option>
         {% endfor %}
@@ -72,6 +78,7 @@
         data-1p-ignore="true"
         data-bwignore="true"
         data-form-type="other"
+        {% if connection_locked %}disabled{% endif %}
       >
     </label>
     <label>{{ ui.connections.api_secret }}
@@ -90,6 +97,7 @@
         data-1p-ignore="true"
         data-bwignore="true"
         data-form-type="other"
+        {% if connection_locked %}disabled{% endif %}
         readonly
       >
       <small class="field-help">{{ "Автоподстановка паролей для этого поля отключена. Вставьте API секрет вручную." if lang == "ru" else "Password autofill is disabled for this field. Paste the API secret manually." }}</small>
@@ -110,10 +118,18 @@
         data-1p-ignore="true"
         data-bwignore="true"
         data-form-type="other"
+        {% if connection_locked %}disabled{% endif %}
         readonly
       >
     </label>
-    <button class="button primary" type="submit">{{ ui.common.save }}</button>
+    <div class="form-actions">
+      <button class="button primary" type="submit" {% if connection_locked %}disabled{% endif %}>{{ ui.common.save }}</button>
+      {% if connection and not connection_locked %}
+        <button class="button danger" type="button" data-delete-connection-open>
+          {{ "Удалить подключение" if lang == "ru" else "Delete connection" }}
+        </button>
+      {% endif %}
+    </div>
   </form>
   {% if success %}
     <p class="alert success">{{ success }}</p>
@@ -125,6 +141,25 @@
     <p class="alert">{{ connection.last_error }}</p>
   {% endif %}
 </section>
+{% if connection and not connection_locked %}
+<dialog class="confirm-dialog" data-delete-connection-dialog>
+  <form method="post" action="/connections/delete">
+    <input type="hidden" name="connection_id" value="{{ connection.id }}">
+    <h2>{{ "Удалить подключение?" if lang == "ru" else "Delete connection?" }}</h2>
+    <p class="muted">
+      {{ "Подключение исчезнет из Griders и больше не будет участвовать в автоторговле. История сделок и сигналов сохранится." if lang == "ru" else "This connection will disappear from Griders and will no longer be used for automated trading. Trade and signal history will remain." }}
+    </p>
+    <label>
+      {{ "Введите код 2FA для подтверждения" if lang == "ru" else "Enter your 2FA code to confirm" }}
+      <input name="twofa_code" inputmode="numeric" autocomplete="one-time-code" required>
+    </label>
+    <div class="form-actions">
+      <button class="button secondary" type="button" data-delete-connection-close>{{ "Отмена" if lang == "ru" else "Cancel" }}</button>
+      <button class="button danger" type="submit">{{ "Да, удалить подключение" if lang == "ru" else "Yes, delete connection" }}</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 <script>
   const connectionStrategySelect = document.querySelector("[data-connection-strategy-select]");
   if (connectionStrategySelect) {
@@ -142,7 +177,11 @@
   }
   const connectionForm = document.querySelector("[data-connection-form]");
   if (connectionForm) {
+    const isConnectionLocked = connectionForm.dataset.connectionLocked === "1";
     const unlockProtectedInput = (input) => {
+      if (isConnectionLocked) {
+        return;
+      }
       input.removeAttribute("readonly");
     };
     connectionForm.querySelectorAll("[data-protected-secret-input]").forEach((input) => {
@@ -157,6 +196,9 @@
       });
     });
     connectionForm.addEventListener("submit", () => {
+      if (isConnectionLocked) {
+        return;
+      }
       const apiSecretVisible = connectionForm.querySelector("[data-api-secret-visible]");
       const apiSecretHidden = connectionForm.querySelector("[data-api-secret-hidden]");
       const webhookVisible = connectionForm.querySelector("[data-webhook-visible]");
@@ -167,6 +209,23 @@
       if (webhookVisible && webhookHidden) {
         webhookHidden.value = webhookVisible.dataset.userEdited === "1" ? webhookVisible.value.trim() : "";
       }
+    });
+  }
+  const deleteConnectionDialog = document.querySelector("[data-delete-connection-dialog]");
+  const deleteConnectionOpen = document.querySelector("[data-delete-connection-open]");
+  const deleteConnectionClose = document.querySelector("[data-delete-connection-close]");
+  if (deleteConnectionDialog && deleteConnectionOpen) {
+    deleteConnectionOpen.addEventListener("click", () => {
+      if (typeof deleteConnectionDialog.showModal === "function") {
+        deleteConnectionDialog.showModal();
+      } else {
+        deleteConnectionDialog.setAttribute("open", "open");
+      }
+    });
+  }
+  if (deleteConnectionDialog && deleteConnectionClose) {
+    deleteConnectionClose.addEventListener("click", () => {
+      deleteConnectionDialog.close();
     });
   }
 </script>

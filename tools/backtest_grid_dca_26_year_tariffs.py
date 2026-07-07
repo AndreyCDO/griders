@@ -1,4 +1,4 @@
-"""One-year portfolio backtest for GRID DCA 2.6 tariff settings.
+"""One-year portfolio backtest for GRID DCA 2.7 tariff settings.
 
 The simulation mirrors the current TradingView Pine signal as a portfolio:
 all configured pairs produce candidates at the same time, then tariff limits,
@@ -27,7 +27,7 @@ from tools.backtest_grid_dca_v25 import TAKER_FEE, fetch_klines
 
 ALL_PAIRS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT", "NEARUSDT",
-    "ZECUSDT", "TONUSDT", "XRPUSDT", "SUIUSDT", "FILUSDT",
+    "ZECUSDT", "ONDOUSDT", "XRPUSDT", "SUIUSDT", "FILUSDT",
     "TAOUSDT", "RENDERUSDT", "ADAUSDT", "INJUSDT", "LITUSDT",
     "ENAUSDT", "LINKUSDT", "AVAXUSDT", "JUPUSDT", "ARBUSDT",
 ]
@@ -38,9 +38,13 @@ PAIR_LAUNCH_COOLDOWN_MS = 60 * 1000
 SIDE_WEBHOOK_COOLDOWN_MS = 5 * 60 * 1000
 STOP_LOSS_PAUSE_MS = 3 * 60 * 60 * 1000
 REPORT_DIR = Path("webapp/static/reports")
-REPORT_PATH = REPORT_DIR / "grid-dca-26-year-tariffs.html"
-JSON_PATH = REPORT_DIR / "grid-dca-26-year-tariffs.json"
+REPORT_PATH = REPORT_DIR / "grid-dca-27-year-tariffs.html"
+JSON_PATH = REPORT_DIR / "grid-dca-27-year-tariffs.json"
 CACHE_DIR = Path(".cache/backtests/bybit_15m")
+STRATEGY_LABEL = "GRID DCA 2.7"
+SIGNAL_VERSION = "2.6"
+DAILY_TREND_EMA = 20
+DAILY_TREND_MOVE3_LIMIT = 1.5
 
 
 @dataclass(frozen=True)
@@ -130,7 +134,7 @@ async def fetch_symbol(client: httpx.AsyncClient, symbol: str, start_ms: int, en
 async def fetch_all(days: int, end: datetime) -> tuple[datetime, datetime, dict[str, list]]:
     end = _utc_floor_15m(end)
     start = end - timedelta(days=days)
-    warmup_start = start - timedelta(days=7)
+    warmup_start = start - timedelta(days=35)
     start_ms = int(warmup_start.timestamp() * 1000)
     end_ms = int(end.timestamp() * 1000)
     symbols = sorted(set(["BTCUSDT", "ETHUSDT", *ALL_PAIRS]))
@@ -150,9 +154,76 @@ def _with_dca_max(signal: dict) -> dict:
     return signal
 
 
+def _daily_closes(rows: list) -> list[tuple[datetime.date, float]]:
+    buckets: dict[datetime.date, float] = {}
+    for row in rows:
+        day = datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc).date()
+        buckets[day] = float(row[4])
+    return sorted(buckets.items(), key=lambda item: item[0])
+
+
+def _ema(values: list[float], length: int) -> list[float]:
+    result = []
+    current = None
+    k = 2 / (length + 1)
+    for value in values:
+        current = value if current is None else value * k + current * (1 - k)
+        result.append(current)
+    return result
+
+
+def _daily_trend_context(btc_rows: list, eth_rows: list) -> dict[datetime.date, dict]:
+    btc_daily = _daily_closes(btc_rows)
+    eth_daily = _daily_closes(eth_rows)
+    btc_by_day = {day: close for day, close in btc_daily}
+    eth_by_day = {day: close for day, close in eth_daily}
+    btc_ema_by_day = {day: value for (day, _), value in zip(btc_daily, _ema([close for _, close in btc_daily], DAILY_TREND_EMA))}
+    eth_ema_by_day = {day: value for (day, _), value in zip(eth_daily, _ema([close for _, close in eth_daily], DAILY_TREND_EMA))}
+    days = sorted(set(btc_by_day) & set(eth_by_day))
+    context: dict[datetime.date, dict] = {}
+    for index, day in enumerate(days):
+        if index < 3:
+            context[day] = {
+                "regime": "neutral",
+                "btc_daily_move_3": 0.0,
+                "eth_daily_move_3": 0.0,
+                "global_daily_move_3": 0.0,
+                "btc_daily_above_ema20": btc_by_day[day] > btc_ema_by_day[day],
+                "eth_daily_above_ema20": eth_by_day[day] > eth_ema_by_day[day],
+            }
+            continue
+        prev_day = days[index - 3]
+        btc_move_3 = (btc_by_day[day] - btc_by_day[prev_day]) / btc_by_day[prev_day] * 100 if btc_by_day[prev_day] else 0.0
+        eth_move_3 = (eth_by_day[day] - eth_by_day[prev_day]) / eth_by_day[prev_day] * 100 if eth_by_day[prev_day] else 0.0
+        global_move_3 = (btc_move_3 + eth_move_3) / 2.0
+        btc_above = btc_by_day[day] > btc_ema_by_day[day]
+        eth_above = eth_by_day[day] > eth_ema_by_day[day]
+        global_up = (btc_above and eth_above) or global_move_3 >= DAILY_TREND_MOVE3_LIMIT
+        global_down = ((not btc_above) and (not eth_above)) or global_move_3 <= -DAILY_TREND_MOVE3_LIMIT
+        regime = "uptrend" if global_up and not global_down else "downtrend" if global_down and not global_up else "neutral"
+        context[day] = {
+            "regime": regime,
+            "btc_daily_move_3": btc_move_3,
+            "eth_daily_move_3": eth_move_3,
+            "global_daily_move_3": global_move_3,
+            "btc_daily_above_ema20": btc_above,
+            "eth_daily_above_ema20": eth_above,
+        }
+    return context
+
+
+def _trend_for_bar(trend_context: dict[datetime.date, dict], timestamp_ms: int) -> dict:
+    # TradingView daily security data is modeled conservatively with the latest
+    # completed daily bar, so intraday signals use the previous UTC day context.
+    day = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).date()
+    previous_day = day - timedelta(days=1)
+    return trend_context.get(previous_day, {"regime": "neutral"})
+
+
 def all_signal_candidates(start: datetime, all_rows: dict[str, list]) -> list[dict]:
     btc = indicators(all_rows["BTCUSDT"])
     eth = indicators(all_rows["ETHUSDT"])
+    trend_context = _daily_trend_context(all_rows["BTCUSDT"], all_rows["ETHUSDT"])
     start_ms = int(start.timestamp() * 1000)
     candidates: list[dict] = []
     for symbol in ALL_PAIRS:
@@ -160,8 +231,13 @@ def all_signal_candidates(start: datetime, all_rows: dict[str, list]) -> list[di
         ind = indicators(rows)
         rsi60 = hourly_rsi_by_15m(rows)
         for index in range(max(50, 30, 20, 14, 3), len(rows) - 1):
-            signal = _signal_at("2.6", ind, index, btc, eth, rsi60)
+            signal = _signal_at(SIGNAL_VERSION, ind, index, btc, eth, rsi60)
             if not signal:
+                continue
+            trend = _trend_for_bar(trend_context, int(rows[index][0]))
+            if signal["side"] == "long" and trend.get("regime") == "downtrend":
+                continue
+            if signal["side"] == "short" and trend.get("regime") == "uptrend":
                 continue
             signal = _with_dca_max(signal)
             entry_index = index + 1
@@ -181,6 +257,10 @@ def all_signal_candidates(start: datetime, all_rows: dict[str, list]) -> list[di
                 "rsi60": signal["rsi60"],
                 "bbpos": signal["bbpos"],
                 "bbwidth": signal["bbwidth"],
+                "global_market_regime": trend.get("regime", "neutral"),
+                "btc_daily_move_3": trend.get("btc_daily_move_3"),
+                "eth_daily_move_3": trend.get("eth_daily_move_3"),
+                "global_daily_move_3": trend.get("global_daily_move_3"),
             })
     return sorted(candidates, key=lambda item: (item["entry_time"], item["symbol"], item["side"]))
 
@@ -316,6 +396,7 @@ def run_portfolio(tariff: Tariff, candidates: list[dict], all_rows: dict[str, li
         "same_pair_active": 0,
         "pair_cooldown": 0,
         "side_cooldown": 0,
+        "margin": 0,
     }
 
     for candidate in candidates:
@@ -343,6 +424,12 @@ def run_portfolio(tariff: Tariff, candidates: list[dict], all_rows: dict[str, li
             skipped["limit"] += 1
             continue
         first_order = first_order_for(tariff, deposit, candidate["grid"])
+        planned_entry_value = first_order * planned_grid_factor(candidate["grid"])
+        required_margin = planned_entry_value / LEVERAGE
+        active_margin = sum(float(trade.get("planned_entry_value") or 0.0) / LEVERAGE for trade in open_trades)
+        if deposit <= 0 or active_margin + required_margin > deposit:
+            skipped["margin"] += 1
+            continue
         trade = simulate_trade(all_rows[symbol], candidate, first_order)
         deposit += float(trade["pnl"])
         trade["deposit_after"] = deposit
@@ -441,6 +528,7 @@ def result_to_json(start: datetime, end: datetime, candidates: list[dict], resul
             "same_candle_priority": "If TP and SL are both touched within one candle, SL is counted first",
             "portfolio": "All eligible pairs are processed together in chronological order",
             "cooldowns": "3h GRID DCA pause after SL, one long and one short webhook per connection every 5 minutes",
+            "trend_filter": "GRID DCA 2.7 blocks long signals during BTC/ETH daily downtrend and short signals during BTC/ETH daily uptrend; neutral daily trend remains tradable",
         },
         "tariffs": [
             {
@@ -504,10 +592,9 @@ def render_report(data: dict) -> str:
         </article>
         """)
 
-    pair_symbols = ALL_PAIRS
     pair_rows = []
     by_tariff = [{row["symbol"]: row for row in tariff["by_pair"]} for tariff in data["tariffs"]]
-    for symbol in pair_symbols:
+    for symbol in ALL_PAIRS:
         cells = [f"<td><strong>{symbol}</strong></td>"]
         for tariff_index, rows in enumerate(by_tariff):
             row = rows.get(symbol)
@@ -515,18 +602,19 @@ def render_report(data: dict) -> str:
             if row:
                 cells.append(f"<td class=\"{sep_class.strip()}\">{row['trades']}</td><td class=\"{css_num(row['pnl'])}\">{signed(row['pnl'])}</td>")
             else:
-                cells.append(f"<td class=\"{sep_class.strip()}\">—</td><td>—</td>")
+                cells.append(f"<td class=\"{sep_class.strip()}\">-</td><td>-</td>")
         pair_rows.append(f"<tr>{''.join(cells)}</tr>")
 
     worst_rows = []
     for tariff_index, tariff in enumerate(data["tariffs"]):
         for trade_index, trade in enumerate(tariff["worst_trades"][:5]):
             row_class = " class=\"tariff-break\"" if tariff_index > 0 and trade_index == 0 else ""
+            side_label = "лонг" if trade["side"] == "long" else "шорт"
             worst_rows.append(f"""
             <tr{row_class}>
               <td>{tariff['name']}</td>
               <td><strong>{trade['symbol']}</strong></td>
-              <td>{'лонг' if trade['side'] == 'long' else 'шорт'}</td>
+              <td>{side_label}</td>
               <td>{trade['stage']}</td>
               <td>{datetime.fromtimestamp(int(trade['entry_time']) / 1000, tz=timezone.utc).strftime('%d.%m.%Y %H:%M')}</td>
               <td>{trade['exit_reason'].upper()}</td>
@@ -545,7 +633,7 @@ def render_report(data: dict) -> str:
           <div class="chart-head">
             <div>
               <h2>{tariff['name']}</h2>
-              <small class="muted">{period_start_label} — {period_end_label}</small>
+              <small class="muted">{period_start_label} - {period_end_label}</small>
             </div>
             <strong class="{css_num(metric_data['pnl'])}">{signed(metric_data['pnl'])} USDT</strong>
           </div>
@@ -558,7 +646,7 @@ def render_report(data: dict) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Годовой бэктест GRID DCA 2.6 · Griders</title>
+  <title>Годовой бэктест {STRATEGY_LABEL} · Griders</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="stylesheet" href="/static/app.css?v=20260611-year-backtest">
   <style>
@@ -585,9 +673,9 @@ def render_report(data: dict) -> str:
   <main class="container report-page">
     <section class="panel report-hero">
       <div>
-        <p class="eyebrow">GRID DCA 2.6</p>
+        <p class="eyebrow">{STRATEGY_LABEL}</p>
         <h1>Годовой бэктест по тарифам</h1>
-        <p class="muted">Портфельная симуляция за период {data['period']['start'][:10]} — {data['period']['end'][:10]}. Все разрешённые пары работают одновременно, а лимиты тарифа применяются к общей очереди сигналов.</p>
+        <p class="muted">Портфельная симуляция за период {data['period']['start'][:10]} - {data['period']['end'][:10]}. Все разрешённые пары работают одновременно, а лимиты тарифа применяются к общей очереди сигналов.</p>
       </div>
       <div class="report-date"><span>Сигналов-кандидатов</span><strong>{data['signal_candidates']}</strong></div>
     </section>
@@ -630,8 +718,9 @@ def render_report(data: dict) -> str:
     <section class="panel">
       <h2>Допущения расчёта</h2>
       <ul class="clean-list">
-        <li>Источник данных: публичные свечи Bybit linear futures. Таймфрейм входа — 15 минут.</li>
+        <li>Источник данных: публичные свечи Bybit linear futures. Таймфрейм входа - 15 минут.</li>
         <li>Часовой RSI рассчитывается из часовых закрытий, собранных из 15-минутных свечей.</li>
+        <li>{STRATEGY_LABEL} использует базовые сигналы 2.6 и блокирует лонги во время дневного downtrend BTC/ETH, а шорты во время дневного uptrend BTC/ETH.</li>
         <li>Вход считается по открытию следующей 15-минутной свечи после подтверждённого сигнала TradingView.</li>
         <li>Комиссия: taker 0.05% на первый ордер, страховочные ордера и выход.</li>
         <li>Если внутри одной свечи одновременно могли сработать TP и SL, засчитывается SL как более осторожный сценарий.</li>
@@ -658,72 +747,45 @@ def render_report(data: dict) -> str:
     function drawAll() {{
       canvases.forEach((canvas) => draw(canvas, Number(canvas.dataset.tariffIndex || 0)));
     }}
-    function draw(canvas, tariffIndex) {{
+    function draw(canvas, index) {{
+      const tariff = reportData.tariffs[index];
+      const points = tariff.equity_curve || [];
       const ctx = canvas.getContext('2d');
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
       ctx.clearRect(0, 0, w, h);
-      const pad = {{left: 58, right: 20, top: 24, bottom: 48}};
-      const tariff = reportData.tariffs[tariffIndex];
-      const curve = {{name: tariff.name, data: tariff.equity_curve, initial: tariff.settings.initial_deposit}};
-      const values = [];
-      values.push(curve.initial);
-      curve.data.forEach(p => values.push(p.equity));
-      const minY = Math.min(...values);
-      const maxY = Math.max(...values);
-      const start = new Date(reportData.period.start).getTime();
-      const end = new Date(reportData.period.end).getTime();
-      const yMin = minY - Math.max(1, (maxY - minY) * 0.08);
-      const yMax = maxY + Math.max(1, (maxY - minY) * 0.08);
-      const x = ts => pad.left + (ts - start) / (end - start) * (w - pad.left - pad.right);
-      const y = val => pad.top + (yMax - val) / (yMax - yMin) * (h - pad.top - pad.bottom);
-      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border') || '#d8e1e8';
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted') || '#6b7a86';
-      ctx.font = '12px system-ui';
-      for (let i = 0; i <= 5; i++) {{
-        const val = yMin + (yMax - yMin) * i / 5;
-        const yy = y(val);
-        ctx.beginPath();
-        ctx.moveTo(pad.left, yy);
-        ctx.lineTo(w - pad.right, yy);
-        ctx.stroke();
-        ctx.fillText(val.toFixed(0), 8, yy + 4);
-      }}
-      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border') || '#d8e1e8';
+      if (!points.length) return;
+      const pad = 28;
+      const xs = points.map(p => p.time);
+      const ys = points.map(p => p.equity);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys, tariff.settings.initial_deposit);
+      const maxY = Math.max(...ys, tariff.settings.initial_deposit);
+      const spanX = Math.max(1, maxX - minX);
+      const spanY = Math.max(1e-9, maxY - minY);
+      function x(v) {{ return pad + (v - minX) / spanX * (w - pad * 2); }}
+      function y(v) {{ return h - pad - (v - minY) / spanY * (h - pad * 2); }}
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--line') || '#d7dee8';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pad, y(tariff.settings.initial_deposit)); ctx.lineTo(w - pad, y(tariff.settings.initial_deposit)); ctx.stroke();
+      ctx.strokeStyle = tariff.metrics.pnl >= 0 ? '#047857' : '#b42318';
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(pad.left, h - pad.bottom);
-      ctx.lineTo(w - pad.right, h - pad.bottom);
+      points.forEach((p, i) => {{
+        const px = x(p.time), py = y(p.equity);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }});
       ctx.stroke();
-      const dateFmt = new Intl.DateTimeFormat('ru-RU', {{day: '2-digit', month: '2-digit'}});
-      for (let i = 0; i <= 6; i++) {{
-        const ts = start + (end - start) * i / 6;
-        const xx = x(ts);
-        ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border') || '#d8e1e8';
-        ctx.beginPath();
-        ctx.moveTo(xx, h - pad.bottom);
-        ctx.lineTo(xx, h - pad.bottom + 5);
-        ctx.stroke();
-        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted') || '#6b7a86';
-        ctx.textAlign = i === 0 ? 'left' : i === 6 ? 'right' : 'center';
-        ctx.fillText(dateFmt.format(new Date(ts)), xx, h - 14);
-      }}
-      ctx.textAlign = 'left';
-      const colors = ['#18b893', '#2563eb', '#f97316'];
-      const color = colors[tariffIndex] || '#18b893';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(x(start), y(curve.initial));
-      curve.data.forEach(point => ctx.lineTo(x(point.time), y(point.equity)));
-      ctx.stroke();
+      ctx.fillStyle = '#5b667a';
+      ctx.font = '12px Inter, system-ui, sans-serif';
+      ctx.fillText(`${{minY.toFixed(2)}} USDT`, pad, h - 8);
+      ctx.fillText(`${{maxY.toFixed(2)}} USDT`, pad, 16);
     }}
     window.addEventListener('resize', resize);
     resize();
   </script>
 </body>
-</html>
-"""
-
+</html>"""
 
 async def main() -> None:
     parser = argparse.ArgumentParser()

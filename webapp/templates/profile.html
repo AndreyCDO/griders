@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ "Профиль" if lang == "ru" else "Profile" }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Профиль Griders: настройки аккаунта, Telegram, тариф, безопасность, двухфакторная авторизация и персональные данные пользователя.{% else %}Griders profile settings for account details, Telegram, plan access, security, two-factor authentication, and personal data.{% endif %}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -102,12 +104,8 @@
         <strong>
           {% if profile_user.role == "admin" %}
             {{ "Админ" if lang == "ru" else "Admin" }}
-          {% elif profile_user.plan == "start" %}
-            {{ "Старт" if lang == "ru" else "Start" }}
-          {% elif profile_user.plan == "premium" %}
-            {{ "Премиум" if lang == "ru" else "Premium" }}
           {% else %}
-            {{ "Бесплатный" if lang == "ru" else "Free" }}
+            {{ profile_user.plan_label_ru if lang == "ru" else profile_user.plan_label_en }}
           {% endif %}
         </strong>
       </div>
@@ -290,6 +288,16 @@
 </script>
 
 {% if user_access.is_admin %}
+<section class="panel">
+  <h2>{{ "Аналитика" if lang == "ru" else "Analytics" }}</h2>
+  <p class="form-note">
+    {{ "Пользователи, итоги по сайту, анализ результатов сделок и подтверждённые сделки Griders перенесены на отдельную админскую страницу." if lang == "ru" else "Users, site totals, trade outcome analysis, and confirmed Griders trades have moved to a separate admin page." }}
+  </p>
+  <a class="button primary" href="/admin/analytics">{{ "Открыть аналитику" if lang == "ru" else "Open analytics" }}</a>
+</section>
+{% endif %}
+
+{% if false and user_access.is_admin %}
 <details class="panel admin-users-panel" open>
   <summary class="admin-users-summary">
     <div>
@@ -394,6 +402,24 @@
             </tr>
           {% endfor %}
         </tbody>
+        <tfoot>
+          <tr class="admin-total-row">
+            <td colspan="5"><strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}</strong></td>
+            <td>
+              <strong class="{{ admin_users_totals.pnl_class }}">
+                {{ admin_users_totals.total_pnl_text }} USDT
+              </strong>
+            </td>
+            <td colspan="4">
+              <strong>
+                {{ "Активных пользователей" if lang == "ru" else "Active users" }}:
+                {{ admin_users_totals.active_users_count }}
+                /
+                {{ admin_users_totals.users_count }}
+              </strong>
+            </td>
+          </tr>
+        </tfoot>
       </table>
     </div>
     <div class="form-actions">
@@ -431,43 +457,266 @@
 
 {% if admin_trade_analysis %}
 <section class="panel admin-trade-analysis">
-  <h2>Trade outcome analysis</h2>
-  <p class="form-note">Closed deals grouped by strategy, side, and close reason. Worst PnL groups are shown first.</p>
+  <h2>{{ "Анализ результатов сделок" if lang == "ru" else "Trade outcome analysis" }}</h2>
+  <p class="form-note">
+    {{ "Закрытые сделки сгруппированы по стратегии, стороне и результату закрытия. Unknown и manual объединены со стопом при минусовом PnL и с тейк-профитом при плюсовом PnL." if lang == "ru" else "Closed deals grouped by strategy, side, and close result. Unknown and manual are merged into stop loss for negative PnL and take profit for positive PnL." }}
+  </p>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>Strategy</th>
-          <th>Side</th>
-          <th>Close</th>
-          <th>Deals</th>
-          <th>Winrate</th>
-          <th>Total PnL</th>
-          <th>Avg PnL</th>
-          <th>Avg ROI</th>
-          <th>Avg R</th>
-          <th>Avg hold</th>
+          <th>{{ "Стратегия" if lang == "ru" else "Strategy" }}</th>
+          <th>{{ "Сторона" if lang == "ru" else "Side" }}</th>
+          <th>{{ "Закрытие" if lang == "ru" else "Close" }}</th>
+          <th>{{ "Сделок" if lang == "ru" else "Deals" }}</th>
+          <th>{{ "Суммарный PnL" if lang == "ru" else "Total PnL" }}</th>
+          <th>{{ "Средний PnL" if lang == "ru" else "Avg PnL" }}</th>
+          <th>{{ "Средний ROI" if lang == "ru" else "Avg ROI" }}</th>
         </tr>
       </thead>
       <tbody>
         {% for row in admin_trade_analysis %}
           <tr>
             <td><strong>{{ row.strategy_code }}</strong></td>
-            <td><span class="side {{ row.side }}">{{ row.side }}</span></td>
-            <td>{{ row.close_reason }}</td>
+            <td><span class="side {{ row.side }}">{{ row.side_label if lang == "ru" else row.side }}</span></td>
+            <td>{{ row.close_reason_label if lang == "ru" else row.close_reason }}</td>
             <td>{{ row.trades_count }}</td>
-            <td>{{ row.win_rate_text }}</td>
             <td><strong class="{{ row.pnl_class }}">{{ row.total_pnl_text }} USDT</strong></td>
             <td>{{ row.avg_pnl_text }} USDT</td>
             <td>{{ row.avg_roi_text }}</td>
-            <td>{{ row.avg_r_text }}</td>
-            <td>{{ row.avg_hold_text }}</td>
           </tr>
         {% endfor %}
       </tbody>
+      <tfoot>
+        <tr class="admin-total-row">
+          <td colspan="3"><strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}</strong></td>
+          <td><strong>{{ admin_trade_analysis_totals.trades_count }}</strong></td>
+          <td>
+            <strong class="{{ admin_trade_analysis_totals.pnl_class }}">
+              {{ admin_trade_analysis_totals.total_pnl_text }} USDT
+            </strong>
+          </td>
+          <td>{{ admin_trade_analysis_totals.avg_pnl_text }} USDT</td>
+          <td>{{ admin_trade_analysis_totals.avg_roi_text }}</td>
+        </tr>
+      </tfoot>
     </table>
   </div>
 </section>
+{% endif %}
+
+{% if admin_griders_trades %}
+<section class="panel admin-griders-trades">
+  <h2>{{ "Все подтверждённые сделки Griders" if lang == "ru" else "All confirmed Griders trades" }}</h2>
+  <p class="form-note">
+    {{ "В таблицу попадают закрытые сделки, которые Griders отправил в Cryptorg и затем сопоставил с закрытием позиции." if lang == "ru" else "The table includes closed trades sent by Griders to Cryptorg and then matched with a closed position." }}
+  </p>
+
+  <div class="monitor-chart-card admin-griders-chart-card" data-empty="{{ 'Нет подтверждённых сделок Griders' if lang == 'ru' else 'No confirmed Griders trades' }}">
+    <script type="application/json" id="admin-griders-chart-data">{{ admin_griders_trades_chart_json|safe }}</script>
+    <svg class="monitor-svg admin-griders-svg" viewBox="0 0 920 360" role="img" aria-label="{{ 'График PnL сделок Griders всех пользователей' if lang == 'ru' else 'All users Griders trades PnL chart' }}"></svg>
+    <div class="monitor-tooltip" hidden></div>
+  </div>
+
+  <div class="table-wrap admin-griders-trades-wrap">
+    <table class="admin-griders-trades-table">
+      <thead>
+        <tr>
+          <th>{{ "Номер" if lang == "ru" else "No." }}</th>
+          <th>{{ "Дата" if lang == "ru" else "Date" }}</th>
+          <th>{{ "Пользователь" if lang == "ru" else "User" }}</th>
+          <th>{{ "Торговая пара" if lang == "ru" else "Pair" }}</th>
+          <th>{{ "Направление" if lang == "ru" else "Side" }}</th>
+          <th>PnL</th>
+          <th>{{ "Стратегия" if lang == "ru" else "Strategy" }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for trade in admin_griders_trades %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ trade.date_display }}</td>
+            <td>{{ trade.user_display }}</td>
+            <td><strong>{{ trade.pair }}</strong></td>
+            <td><span class="side {{ trade.side }}">{{ trade.side_label if lang == "ru" else trade.side }}</span></td>
+            <td><strong class="{{ trade.pnl_class }}">{{ trade.pnl_text }} USDT</strong></td>
+            <td>{{ trade.strategy }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="admin-total-row">
+          <td colspan="4"><strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}</strong></td>
+          <td><strong>{{ admin_griders_trades_totals.trades_count }}</strong></td>
+          <td>
+            <strong class="{{ admin_griders_trades_totals.pnl_class }}">
+              {{ admin_griders_trades_totals.total_pnl_text }} USDT
+            </strong>
+          </td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</section>
+
+<script>
+(() => {
+  const root = document.querySelector(".admin-griders-chart-card");
+  const svg = root?.querySelector(".admin-griders-svg");
+  const source = document.getElementById("admin-griders-chart-data");
+  if (!root || !svg || !source) {
+    return;
+  }
+  const labels = {
+    dayPnl: {{ ("PnL за день" if lang == "ru" else "Daily PnL")|tojson }},
+    cumulative: {{ ("PnL кумулятивный" if lang == "ru" else "Cumulative PnL")|tojson }},
+    trades: {{ ("Сделок" if lang == "ru" else "Trades")|tojson }},
+    noData: root.dataset.empty || "No data",
+  };
+  const data = JSON.parse(source.textContent || "[]");
+  const width = 920;
+  const height = 360;
+  const margin = { top: 22, right: 28, bottom: 48, left: 112 };
+  const plotTop = 8;
+  const plotBottom = 280;
+  const barTop = 294;
+  const barBottom = height - margin.bottom;
+  const plotWidth = width - margin.left - margin.right;
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (name, attrs = {}) => {
+    const node = document.createElementNS(ns, name);
+    Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+    svg.appendChild(node);
+    return node;
+  };
+  const formatMoney = (value) => `${Number(value || 0).toFixed(2)} USDT`;
+  const formatAxisNumber = (value) => {
+    const num = Number(value || 0);
+    if (Math.abs(num - Math.round(num)) < 0.000001) {
+      return String(Math.round(num));
+    }
+    return num.toFixed(Math.abs(num) >= 1 ? 1 : 2);
+  };
+  const niceStep = (range, targetTicks = 5) => {
+    const rough = Math.max(0.000001, range / Math.max(1, targetTicks - 1));
+    const power = 10 ** Math.floor(Math.log10(rough));
+    const fraction = rough / power;
+    const niceFraction = fraction <= 1 ? 1 : (fraction <= 2 ? 2 : (fraction <= 5 ? 5 : 10));
+    return niceFraction * power;
+  };
+  const niceTicks = (min, max, targetTicks = 5) => {
+    const step = niceStep(max - min, targetTicks);
+    const start = Math.floor(min / step) * step;
+    const end = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let value = start; value <= end + step * 0.5; value += step) {
+      ticks.push(Number(value.toFixed(10)));
+    }
+    return { ticks, min: start, max: end };
+  };
+  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+  }[ch]));
+  while (svg.firstChild) {
+    svg.removeChild(svg.firstChild);
+  }
+  if (!data.length) {
+    el("text", { x: width / 2, y: height / 2, "text-anchor": "middle", class: "monitor-empty-label", fill: "#667680" }).textContent = labels.noData;
+    return;
+  }
+  const cumulatives = data.map((item) => Number(item.cumulative || 0));
+  const trades = data.map((item) => Number(item.trades || 0));
+  let minY = Math.min(0, ...cumulatives);
+  let maxY = Math.max(0, ...cumulatives);
+  if (minY === maxY) {
+    minY -= 1;
+    maxY += 1;
+  }
+  const pad = (maxY - minY) * 0.14;
+  minY -= pad;
+  maxY += pad;
+  const axis = niceTicks(minY, maxY, 7);
+  minY = axis.min;
+  maxY = axis.max;
+  const maxTrades = Math.max(1, ...trades);
+  const xAt = (index) => margin.left + (data.length === 1 ? plotWidth / 2 : (index / (data.length - 1)) * plotWidth);
+  const yAt = (value) => plotBottom - ((value - minY) / (maxY - minY)) * (plotBottom - plotTop);
+  const barHeight = (value) => (value / maxTrades) * (barBottom - barTop);
+
+  el("rect", { x: 0, y: 0, width, height, rx: 10, class: "monitor-chart-bg", fill: "#fbfdfc" });
+  axis.ticks.forEach((value) => {
+    const y = yAt(value);
+    el("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, class: "monitor-grid-line", stroke: "#dfe8e4", "stroke-width": 1 });
+    el("text", { x: margin.left - 18, y: y + 4, "text-anchor": "end", class: "monitor-axis-label", fill: "#667680" }).textContent = formatAxisNumber(value);
+  });
+  const startY = yAt(0);
+  el("line", { x1: margin.left - 8, x2: width - margin.right, y1: startY, y2: startY, class: "monitor-start-line", stroke: "#99a7ad", "stroke-width": 1, "stroke-dasharray": "3 5", opacity: "0.8" });
+  el("line", { x1: margin.left, x2: width - margin.right, y1: barBottom, y2: barBottom, class: "monitor-axis-line", stroke: "#cbd9d4", "stroke-width": 1 });
+  el("text", { x: margin.left - 18, y: barTop + 18, "text-anchor": "end", class: "monitor-axis-label", fill: "#667680" }).textContent = labels.trades;
+
+  const tickStep = Math.max(1, Math.ceil(data.length / 8));
+  data.forEach((item, index) => {
+    const x = xAt(index);
+    if (index % tickStep === 0 || index === data.length - 1) {
+      el("text", { x, y: height - 18, "text-anchor": "middle", class: "monitor-axis-label", fill: "#667680" }).textContent = item.label;
+    }
+    const h = barHeight(Number(item.trades || 0));
+    el("rect", { x: x - 4, y: barBottom - h, width: 8, height: h, rx: 2, class: "monitor-trade-bar", fill: "#3b78a8", opacity: "0.42" });
+  });
+  const path = data.map((item, index) => `${index ? "L" : "M"} ${xAt(index).toFixed(2)} ${yAt(Number(item.cumulative || 0)).toFixed(2)}`).join(" ");
+  el("path", { d: path, class: "monitor-pnl-line", fill: "none", stroke: "#0b8f70", "stroke-width": 3, "stroke-linecap": "round", "stroke-linejoin": "round" });
+  const crosshair = el("line", { x1: 0, x2: 0, y1: plotTop, y2: barBottom, class: "monitor-crosshair", stroke: "#7b8d96", "stroke-width": 1, "stroke-dasharray": "4 4", hidden: "hidden" });
+  const active = el("circle", { cx: 0, cy: 0, r: 7, class: "monitor-active-point", fill: "#1e9be0", stroke: "#ffffff", "stroke-width": 3, hidden: "hidden" });
+  data.forEach((item, index) => {
+    el("circle", {
+      cx: xAt(index),
+      cy: yAt(Number(item.cumulative || 0)),
+      r: 3.8,
+      class: Number(item.pnl || 0) < 0 ? "monitor-point negative-dot" : "monitor-point",
+      fill: "#ffffff",
+      stroke: Number(item.pnl || 0) < 0 ? "#d14b4b" : "#086b54",
+      "stroke-width": 2,
+    });
+  });
+
+  const tooltip = root.querySelector(".monitor-tooltip");
+  const showAt = (event) => {
+    const rect = svg.getBoundingClientRect();
+    const scaleX = width / rect.width;
+    const mouseX = (event.clientX - rect.left) * scaleX;
+    let nearest = 0;
+    let best = Infinity;
+    data.forEach((_, index) => {
+      const dist = Math.abs(xAt(index) - mouseX);
+      if (dist < best) {
+        best = dist;
+        nearest = index;
+      }
+    });
+    const item = data[nearest];
+    const x = xAt(nearest);
+    const y = yAt(Number(item.cumulative || 0));
+    crosshair.removeAttribute("hidden");
+    active.removeAttribute("hidden");
+    crosshair.setAttribute("x1", x);
+    crosshair.setAttribute("x2", x);
+    active.setAttribute("cx", x);
+    active.setAttribute("cy", y);
+    tooltip.hidden = false;
+    tooltip.innerHTML = `<strong>${escapeHtml(item.date)}</strong><span>${labels.dayPnl}: ${escapeHtml(item.pnlText || formatMoney(item.pnl))}</span><span>${labels.cumulative}: ${escapeHtml(item.cumulativeText || formatMoney(item.cumulative))}</span><span>${labels.trades}: ${escapeHtml(item.trades)}</span>`;
+    tooltip.style.left = `${Math.min(rect.width - 220, Math.max(12, (x / width) * rect.width + 12))}px`;
+    tooltip.style.top = `${Math.min(rect.height - 112, Math.max(10, (y / height) * rect.height - 58))}px`;
+  };
+  const hide = () => {
+    crosshair.setAttribute("hidden", "hidden");
+    active.setAttribute("hidden", "hidden");
+    tooltip.hidden = true;
+  };
+  svg.addEventListener("pointermove", showAt);
+  svg.addEventListener("pointerleave", hide);
+})();
+</script>
 {% endif %}
 
 <script>

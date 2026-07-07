@@ -1,4 +1,5 @@
 .deploy/
+.tools/
 charting_library/
 __pycache__/
 *.py[cod]

@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from . import settings
 from .db import execute, fetch_all, fetch_one
 
 COUNTER_KEY = "site_totals_v2"
@@ -18,15 +19,19 @@ REPORT_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 def site_totals() -> dict:
     users_row = fetch_one("SELECT COUNT(*) AS users_count FROM ai_users") or {}
-    counter = fetch_one(
-        "SELECT * FROM ai_site_trade_counter WHERE counter_key=%s",
-        (COUNTER_KEY,),
+    deals_row = fetch_one(
+        """
+        SELECT COUNT(*) AS deals_count,
+               COALESCE(SUM(credited_volume), 0) AS traded_volume
+        FROM ai_site_trade_deals
+        WHERE status='closed' AND closed_at IS NOT NULL
+        """
     ) or {}
     return {
         "users_count": int(users_row.get("users_count") or 0),
-        "deals_count": int(counter.get("deals_count") or 0),
-        "traded_volume": _float(counter.get("traded_volume")),
-        "counted_from": counter.get("counted_from") or COUNTER_START_DATE,
+        "deals_count": int(deals_row.get("deals_count") or 0),
+        "traded_volume": _float(deals_row.get("traded_volume")),
+        "counted_from": COUNTER_START_DATE,
     }
 
 
@@ -36,7 +41,11 @@ def trade_analysis_summary() -> list[dict]:
         SELECT
             strategy_code,
             side,
-            close_reason,
+            CASE
+                WHEN close_reason IN ('unknown', 'manual') AND closed_pnl <= 0 THEN 'stop_loss'
+                WHEN close_reason IN ('unknown', 'manual') AND closed_pnl > 0 THEN 'take_profit'
+                ELSE close_reason
+            END AS close_reason,
             COUNT(*) AS trades_count,
             SUM(CASE WHEN outcome='win' THEN 1 ELSE 0 END) AS wins_count,
             SUM(CASE WHEN outcome='loss' THEN 1 ELSE 0 END) AS losses_count,
@@ -47,9 +56,15 @@ def trade_analysis_summary() -> list[dict]:
             COALESCE(AVG(hold_seconds), 0) AS avg_hold_seconds
         FROM ai_site_trade_deals
         WHERE status='closed'
-        GROUP BY strategy_code, side, close_reason
+        GROUP BY
+            strategy_code,
+            side,
+            CASE
+                WHEN close_reason IN ('unknown', 'manual') AND closed_pnl <= 0 THEN 'stop_loss'
+                WHEN close_reason IN ('unknown', 'manual') AND closed_pnl > 0 THEN 'take_profit'
+                ELSE close_reason
+            END
         ORDER BY total_pnl ASC, trades_count DESC
-        LIMIT 30
         """
     )
     return [
@@ -168,7 +183,7 @@ def process_closed_rows_for_counter(user_id: int, connection_id: int | None, clo
         )
         if not deal:
             continue
-        pnl = _float(row.get("closedPnl"))
+        pnl = _effective_cryptorg_pnl(row, side)
         safety_orders, volume = _infer_safety_orders(deal, pnl)
         entry_value = _closed_entry_value(row)
         closed_dt = _parse_mysql_datetime(closed_at)
@@ -464,10 +479,47 @@ def _hold_seconds(sent_at: datetime | None, closed_at: datetime | None) -> int |
 
 
 def _closed_entry_value(row: dict) -> float:
-    value = _float(row.get("cumEntryValue"))
-    if value > 0:
-        return value
-    return abs(_float(row.get("qty")) * _float(row.get("avgEntryPrice")))
+    calculated = abs(_float(row.get("qty")) * _float(row.get("avgEntryPrice")))
+    if calculated > 0:
+        return calculated
+    return _float(row.get("cumEntryValue"))
+
+
+def _cryptorg_display_pnl(row: dict, position_side: str) -> float | None:
+    qty = abs(_float(row.get("qty")))
+    entry = _float(row.get("avgEntryPrice"))
+    exit_price = _float(row.get("avgExitPrice"))
+    if qty <= 0 or entry <= 0 or exit_price <= 0:
+        return None
+    if position_side == "long":
+        gross = (exit_price - entry) * qty
+    elif position_side == "short":
+        gross = (entry - exit_price) * qty
+    else:
+        return None
+    entry_value = qty * entry
+    exit_value = qty * exit_price
+    entry_fee_rate = max(0.0, float(settings.CRYPTORG_TAKER_FEE_PCT)) / 100.0
+    close_type = str(row.get("orderType") or row.get("stopOrderType") or "").lower()
+    close_fee_pct = settings.CRYPTORG_MAKER_FEE_PCT if close_type == "limit" else settings.CRYPTORG_TAKER_FEE_PCT
+    close_fee_rate = max(0.0, float(close_fee_pct)) / 100.0
+    return gross - (entry_value * entry_fee_rate) - (exit_value * close_fee_rate)
+
+
+def _effective_cryptorg_pnl(row: dict, position_side: str) -> float:
+    api_pnl = _float(row.get("closedPnl"))
+    if not _closed_entry_value_anomalous(row):
+        return api_pnl
+    calculated = _cryptorg_display_pnl(row, position_side)
+    return calculated if calculated is not None else api_pnl
+
+
+def _closed_entry_value_anomalous(row: dict) -> bool:
+    reported = _float(row.get("cumEntryValue"))
+    calculated = abs(_float(row.get("qty")) * _float(row.get("avgEntryPrice")))
+    if reported <= 0 or calculated <= 0:
+        return False
+    return abs(reported - calculated) > max(1.0, calculated * 0.05)
 
 
 def _day_bounds_utc(day: date) -> tuple[str, str]:

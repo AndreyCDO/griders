@@ -3,11 +3,14 @@ set -euo pipefail
 
 APP_DIR="/var/www/fastuser/data/cryptorg-trader"
 SESSION_NAME="ai_cryptorg_web"
+MODE="${1:-restart}"
 
 cd "$APP_DIR"
 
-if curl -fsS http://127.0.0.1:8000/ >/dev/null 2>&1; then
-  exit 0
+if [ "$MODE" = "health" ]; then
+  if curl -fsS --max-time 3 http://127.0.0.1:8000/ >/dev/null; then
+    exit 0
+  fi
 fi
 
 if screen -list | grep -q "[.]${SESSION_NAME}[[:space:]]"; then

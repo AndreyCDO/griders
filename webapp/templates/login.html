@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.auth.login_title }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Вход в личный кабинет Griders для управления подключениями Cryptorg, стратегиями автотрейдинга, сигналами, тарифом и настройками безопасности.{% else %}Sign in to the Griders dashboard to manage Cryptorg connections, automated trading strategies, signals, plans, and security settings.{% endif %}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <section class="auth-wrap">
   <form class="auth-box" method="post" action="/login">

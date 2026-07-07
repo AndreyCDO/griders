@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+{% block title %}{{ "Аналитика" if lang == "ru" else "Analytics" }} · {{ app_name }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">{{ "Админ" if lang == "ru" else "Admin" }}</p>
+  <h1>{{ "Аналитика" if lang == "ru" else "Analytics" }}</h1>
+  <p>{{ "Пользователи, итоги сайта и подтверждённые сделки Griders собраны отдельно от обычного профиля." if lang == "ru" else "Users, site totals, and confirmed Griders trades are separated from the regular profile." }}</p>
+</section>
+
+{% if success %}
+  <div class="alert success">
+    {% if success == "plans" %}
+      {{ "Тарифы пользователей обновлены." if lang == "ru" else "User plans updated." }}
+    {% elif success == "user_deleted" %}
+      {{ "Пользователь удалён." if lang == "ru" else "User deleted." }}
+    {% elif success == "stats_queued" %}
+      {{ "Обновление статусов пользователей запущено в фоне." if lang == "ru" else "User status refresh started in the background." }}
+    {% elif success == "stats_running" %}
+      {{ "Обновление статусов уже выполняется." if lang == "ru" else "User status refresh is already running." }}
+    {% elif success == "griders_sync_queued" %}
+      {{ "Обновление подтверждённых сделок Griders запущено в фоне." if lang == "ru" else "Confirmed Griders trade refresh started in the background." }}
+    {% else %}
+      {{ success }}
+    {% endif %}
+  </div>
+{% endif %}
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+
+<details class="panel admin-users-panel" open>
+  <summary class="admin-users-summary">
+    <div>
+      <h2>{{ "Пользователи" if lang == "ru" else "Users" }}</h2>
+      <p class="muted">{{ "Тарифы, активность и PnL только по подтверждённым сделкам Griders." if lang == "ru" else "Plans, activity, and PnL from confirmed Griders trades only." }}</p>
+    </div>
+    <span class="button tiny admin-users-toggle">{{ "Свернуть / развернуть" if lang == "ru" else "Collapse / expand" }}</span>
+  </summary>
+  <form method="post" action="/profile/admin/users">
+    <div class="form-actions admin-users-filter-actions">
+      <button class="button secondary tiny" type="button" data-toggle-inactive-users>
+        {{ "Скрыть неактивных пользователей" if lang == "ru" else "Hide inactive users" }}
+      </button>
+    </div>
+    <div class="table-wrap">
+      <table class="admin-users-table">
+        <thead>
+          <tr>
+            <th>№</th>
+            <th>e-mail</th>
+            <th>{{ "Ник пользователя" if lang == "ru" else "Nickname" }}</th>
+            <th>{{ "Телеграм" if lang == "ru" else "Telegram" }}</th>
+            <th>{{ "Дата регистрации" if lang == "ru" else "Registration date" }}</th>
+            <th>PNL<br>USDT</th>
+            <th>{{ "Тариф" if lang == "ru" else "Plan" }}</th>
+            <th>{{ "Реферал" if lang == "ru" else "Referral" }}</th>
+            <th>{{ "Действия" if lang == "ru" else "Actions" }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in admin_users %}
+            <tr data-plan-row data-user-active="{{ '1' if account.connection_status == 'active' else '0' }}">
+              <td data-row-number>{{ loop.index }}</td>
+              <td>
+                <a class="admin-email admin-user-view-link {{ account.connection_status_class }}" href="/admin/users/{{ account.id }}/view" title="{{ 'Открыть профиль пользователя в режиме просмотра' if lang == 'ru' else 'Open user profile in read-only view' }}">{{ account.email }}</a>
+                {% if account.role == "admin" %}<span class="badge">{{ "Админ" if lang == "ru" else "Admin" }}</span>{% endif %}
+              </td>
+              <td>{{ account.nickname or "—" }}</td>
+              <td>
+                {% if account.telegram_username %}
+                  @{{ account.telegram_username }}
+                  {% if account.telegram_user_id %}<span class="badge">ok</span>{% endif %}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>{{ account.created_date_display }}</td>
+              <td><strong class="{{ account.pnl_class }}">{{ account.cumulative_pnl }}</strong></td>
+              <td>
+                <select name="plan_{{ account.id }}" {% if account.role == "admin" %}disabled{% endif %}>
+                  {% for code in base_tariff_codes %}
+                    {% set limits = tariffs[code] %}
+                    <option value="{{ code }}" {% if account.plan == code or (account.role == "admin" and code == "premium") %}selected{% endif %}>
+                      {{ limits.name_ru if lang == "ru" else limits.name_en }}
+                    </option>
+                  {% endfor %}
+                </select>
+                {% if account.role == "admin" %}<input type="hidden" name="plan_{{ account.id }}" value="premium">{% endif %}
+              </td>
+              <td>
+                <label class="checkbox-inline">
+                  <input type="checkbox" name="referral_{{ account.id }}" value="1" {% if account.referral_verified %}checked{% endif %} {% if account.role == "admin" %}disabled{% endif %}>
+                </label>
+              </td>
+              <td>
+                {% if account.role != "admin" and account.id != profile_user.id %}
+                  <button class="button danger tiny" type="submit" formaction="/profile/admin/users/delete" formmethod="post" name="delete_user_id" value="{{ account.id }}" onclick="return confirm('{{ 'Удалить пользователя и все связанные данные?' if lang == 'ru' else 'Delete this user and all related data?' }}')">
+                    {{ "Удалить" if lang == "ru" else "Delete" }}
+                  </button>
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="admin-total-row">
+            <td colspan="5"><strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}</strong></td>
+            <td><strong class="{{ admin_users_totals.pnl_class }}">{{ admin_users_totals.total_pnl_text }}</strong></td>
+            <td colspan="3"><strong>{{ "Активных пользователей" if lang == "ru" else "Active users" }}: {{ admin_users_totals.active_users_count }} / {{ admin_users_totals.users_count }}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="form-actions">
+      <button class="button secondary" type="submit" formaction="/profile/admin/users/refresh" formmethod="post">{{ "Обновить статусы" if lang == "ru" else "Refresh statuses" }}</button>
+      <button class="button primary" type="submit">{{ "Сохранить тарифы" if lang == "ru" else "Save plans" }}</button>
+    </div>
+  </form>
+</details>
+
+<section class="panel admin-site-stats">
+  <h2>{{ "Итоги по сайту" if lang == "ru" else "Site totals" }}</h2>
+  <p class="form-note">{{ "Расчёт ведётся с 08.06.2026." if lang == "ru" else "Calculated from 2026-06-08." }}</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ "Пользователей" if lang == "ru" else "Users" }}</th>
+          <th>{{ "Сделок" if lang == "ru" else "Deals" }}</th>
+          <th>{{ "Объём" if lang == "ru" else "Volume" }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>{{ admin_site_stats.users_count }}</strong></td>
+          <td><strong>{{ admin_site_stats.deals_count }}</strong></td>
+          <td><strong>{{ admin_site_stats.traded_volume }} USDT</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if admin_trade_analysis %}
+<section class="panel admin-trade-analysis">
+  <h2>{{ "Анализ результатов сделок" if lang == "ru" else "Trade Outcome Analysis" }}</h2>
+  <p class="form-note">
+    {{ "Unknown и manual объединены со стопом при минусовом PnL и с тейк-профитом при плюсовом PnL." if lang == "ru" else "Unknown and manual are merged into stop loss for negative PnL and take profit for positive PnL." }}
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ "Стратегия" if lang == "ru" else "Strategy" }}</th>
+          <th>{{ "Сторона" if lang == "ru" else "Side" }}</th>
+          <th>{{ "Закрытие" if lang == "ru" else "Close" }}</th>
+          <th>{{ "Сделок" if lang == "ru" else "Deals" }}</th>
+          <th>{{ "Суммарный PnL" if lang == "ru" else "Total PnL" }}</th>
+          <th>{{ "Средний PnL" if lang == "ru" else "Avg PnL" }}</th>
+          <th>{{ "Средний ROI" if lang == "ru" else "Avg ROI" }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in admin_trade_analysis %}
+          <tr>
+            <td><strong>{{ row.strategy_code }}</strong></td>
+            <td><span class="side {{ row.side }}">{{ row.side_label if lang == "ru" else row.side }}</span></td>
+            <td>{{ row.close_reason_label if lang == "ru" else row.close_reason }}</td>
+            <td>{{ row.trades_count }}</td>
+            <td><strong class="{{ row.pnl_class }}">{{ row.total_pnl_text }} USDT</strong></td>
+            <td>{{ row.avg_pnl_text }} USDT</td>
+            <td>{{ row.avg_roi_text }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="admin-total-row">
+          <td colspan="3"><strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}</strong></td>
+          <td><strong>{{ admin_trade_analysis_totals.trades_count }}</strong></td>
+          <td><strong class="{{ admin_trade_analysis_totals.pnl_class }}">{{ admin_trade_analysis_totals.total_pnl_text }} USDT</strong></td>
+          <td>{{ admin_trade_analysis_totals.avg_pnl_text }} USDT</td>
+          <td>{{ admin_trade_analysis_totals.avg_roi_text }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel admin-griders-trades">
+  <div class="panel-heading-row">
+    <div>
+      <h2>{{ "Все подтверждённые сделки Griders" if lang == "ru" else "All Confirmed Griders Trades" }}</h2>
+      <p class="form-note">{{ "Закрытые сделки, которые Griders отправил в Cryptorg и затем сопоставил с закрытием позиции." if lang == "ru" else "Closed trades sent by Griders to Cryptorg and then matched with a closed position." }}</p>
+    </div>
+    <form method="post" action="/admin/analytics/griders-trades/refresh">
+      <button class="button secondary" type="submit">{{ "Обновить сделки" if lang == "ru" else "Refresh trades" }}</button>
+    </form>
+  </div>
+
+  <div class="monitor-chart-card admin-griders-chart-card" data-empty="{{ 'Нет подтверждённых сделок Griders' if lang == 'ru' else 'No confirmed Griders trades' }}">
+    <script type="application/json" id="admin-griders-chart-data">{{ admin_griders_trades_chart_json|safe }}</script>
+    <svg class="monitor-svg admin-griders-svg" viewBox="0 0 920 360" role="img" aria-label="{{ 'График PnL сделок Griders всех пользователей' if lang == 'ru' else 'All users Griders trades PnL chart' }}"></svg>
+    <div class="monitor-tooltip" hidden></div>
+  </div>
+
+  <div class="admin-griders-summary">
+    <strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}:</strong>
+    <span>{{ admin_griders_trades_totals.trades_count }} {{ "сделок" if lang == "ru" else "trades" }}</span>
+    <span class="{{ admin_griders_trades_totals.pnl_class }}">{{ admin_griders_trades_totals.total_pnl_text }} USDT</span>
+  </div>
+</section>
+
+<script>
+(() => {
+  document.querySelectorAll("[data-plan-row]").forEach((row) => {
+    const choices = Array.from(row.querySelectorAll("[data-plan-choice]"));
+    choices.forEach((choice) => {
+      choice.addEventListener("change", () => {
+        if (choice.checked) {
+          choices.forEach((other) => {
+            if (other !== choice) other.checked = false;
+          });
+        } else if (!choices.some((item) => item.checked)) {
+          choice.checked = true;
+        }
+      });
+    });
+  });
+
+  const inactiveToggle = document.querySelector("[data-toggle-inactive-users]");
+  if (inactiveToggle) {
+    let inactiveHidden = false;
+    const hideLabel = {{ ("Скрыть неактивных пользователей" if lang == "ru" else "Hide inactive users")|tojson }};
+    const showLabel = {{ ("Показать неактивных пользователей" if lang == "ru" else "Show inactive users")|tojson }};
+    const renumberRows = () => {
+      let number = 1;
+      document.querySelectorAll("[data-plan-row]").forEach((row) => {
+        const cell = row.querySelector("[data-row-number]");
+        if (!cell) return;
+        if (row.hidden) return;
+        cell.textContent = String(number);
+        number += 1;
+      });
+    };
+    const applyInactiveVisibility = () => {
+      document.querySelectorAll("[data-plan-row][data-user-active='0']").forEach((row) => {
+        row.hidden = inactiveHidden;
+      });
+      inactiveToggle.textContent = inactiveHidden ? showLabel : hideLabel;
+      renumberRows();
+    };
+    inactiveToggle.addEventListener("click", () => {
+      inactiveHidden = !inactiveHidden;
+      applyInactiveVisibility();
+    });
+    applyInactiveVisibility();
+  }
+
+  const root = document.querySelector(".admin-griders-chart-card");
+  const svg = root?.querySelector(".admin-griders-svg");
+  const source = document.getElementById("admin-griders-chart-data");
+  if (!root || !svg || !source) {
+    return;
+  }
+  const labels = {
+    dayPnl: {{ ("PnL за день" if lang == "ru" else "Daily PnL")|tojson }},
+    cumulative: {{ ("PnL кумулятивный" if lang == "ru" else "Cumulative PnL")|tojson }},
+    trades: {{ ("Сделок" if lang == "ru" else "Trades")|tojson }},
+    noData: root.dataset.empty || "No data",
+  };
+  const data = JSON.parse(source.textContent || "[]");
+  const width = 920;
+  const height = 360;
+  const margin = { top: 22, right: 28, bottom: 48, left: 112 };
+  const plotTop = 8;
+  const plotBottom = 280;
+  const barTop = 294;
+  const barBottom = height - margin.bottom;
+  const plotWidth = width - margin.left - margin.right;
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (name, attrs = {}) => {
+    const node = document.createElementNS(ns, name);
+    Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+    svg.appendChild(node);
+    return node;
+  };
+  const formatMoney = (value) => `${Number(value || 0).toFixed(2)} USDT`;
+  const formatAxisNumber = (value) => {
+    const num = Number(value || 0);
+    if (Math.abs(num - Math.round(num)) < 0.000001) {
+      return String(Math.round(num));
+    }
+    return num.toFixed(Math.abs(num) >= 1 ? 1 : 2);
+  };
+  const niceStep = (range, targetTicks = 5) => {
+    const rough = Math.max(0.000001, range / Math.max(1, targetTicks - 1));
+    const power = 10 ** Math.floor(Math.log10(rough));
+    const fraction = rough / power;
+    const niceFraction = fraction <= 1 ? 1 : (fraction <= 2 ? 2 : (fraction <= 5 ? 5 : 10));
+    return niceFraction * power;
+  };
+  const niceTicks = (min, max, targetTicks = 5) => {
+    const step = niceStep(max - min, targetTicks);
+    const start = Math.floor(min / step) * step;
+    const end = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let value = start; value <= end + step * 0.5; value += step) {
+      ticks.push(Number(value.toFixed(10)));
+    }
+    return { ticks, min: start, max: end };
+  };
+  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+  }[ch]));
+  while (svg.firstChild) {
+    svg.removeChild(svg.firstChild);
+  }
+  if (!data.length) {
+    el("text", { x: width / 2, y: height / 2, "text-anchor": "middle", class: "monitor-empty-label", fill: "#667680" }).textContent = labels.noData;
+    return;
+  }
+  const cumulatives = data.map((item) => Number(item.cumulative || 0));
+  const trades = data.map((item) => Number(item.trades || 0));
+  let minY = Math.min(0, ...cumulatives);
+  let maxY = Math.max(0, ...cumulatives);
+  if (minY === maxY) {
+    minY -= 1;
+    maxY += 1;
+  }
+  const pad = (maxY - minY) * 0.14;
+  minY -= pad;
+  maxY += pad;
+  const axis = niceTicks(minY, maxY, 7);
+  minY = axis.min;
+  maxY = axis.max;
+  const maxTrades = Math.max(1, ...trades);
+  const xAt = (index) => margin.left + (data.length === 1 ? plotWidth / 2 : (index / (data.length - 1)) * plotWidth);
+  const yAt = (value) => plotBottom - ((value - minY) / (maxY - minY)) * (plotBottom - plotTop);
+  const barHeight = (value) => (value / maxTrades) * (barBottom - barTop);
+
+  el("rect", { x: 0, y: 0, width, height, rx: 10, class: "monitor-chart-bg", fill: "#fbfdfc" });
+  axis.ticks.forEach((value) => {
+    const y = yAt(value);
+    el("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, class: "monitor-grid-line", stroke: "#dfe8e4", "stroke-width": 1 });
+    el("text", { x: margin.left - 18, y: y + 4, "text-anchor": "end", class: "monitor-axis-label", fill: "#667680" }).textContent = formatAxisNumber(value);
+  });
+  const startY = yAt(0);
+  el("line", { x1: margin.left - 8, x2: width - margin.right, y1: startY, y2: startY, class: "monitor-start-line", stroke: "#99a7ad", "stroke-width": 1, "stroke-dasharray": "3 5", opacity: "0.8" });
+  el("line", { x1: margin.left, x2: width - margin.right, y1: barBottom, y2: barBottom, class: "monitor-axis-line", stroke: "#cbd9d4", "stroke-width": 1 });
+  el("text", { x: margin.left - 18, y: barTop + 18, "text-anchor": "end", class: "monitor-axis-label", fill: "#667680" }).textContent = labels.trades;
+
+  const tickStep = Math.max(1, Math.ceil(data.length / 8));
+  data.forEach((item, index) => {
+    const x = xAt(index);
+    if (index % tickStep === 0 || index === data.length - 1) {
+      el("text", { x, y: height - 18, "text-anchor": "middle", class: "monitor-axis-label", fill: "#667680" }).textContent = item.label;
+    }
+    const h = barHeight(Number(item.trades || 0));
+    el("rect", { x: x - 4, y: barBottom - h, width: 8, height: h, rx: 2, class: "monitor-trade-bar", fill: "#3b78a8", opacity: "0.42" });
+  });
+  const path = data.map((item, index) => `${index ? "L" : "M"} ${xAt(index).toFixed(2)} ${yAt(Number(item.cumulative || 0)).toFixed(2)}`).join(" ");
+  el("path", { d: path, class: "monitor-pnl-line", fill: "none", stroke: "#0b8f70", "stroke-width": 3, "stroke-linecap": "round", "stroke-linejoin": "round" });
+  const crosshair = el("line", { x1: 0, x2: 0, y1: plotTop, y2: barBottom, class: "monitor-crosshair", stroke: "#7b8d96", "stroke-width": 1, "stroke-dasharray": "4 4", hidden: "hidden" });
+  const active = el("circle", { cx: 0, cy: 0, r: 7, class: "monitor-active-point", fill: "#1e9be0", stroke: "#ffffff", "stroke-width": 3, hidden: "hidden" });
+  data.forEach((item, index) => {
+    el("circle", {
+      cx: xAt(index),
+      cy: yAt(Number(item.cumulative || 0)),
+      r: 3.8,
+      class: Number(item.pnl || 0) < 0 ? "monitor-point negative-dot" : "monitor-point",
+      fill: "#ffffff",
+      stroke: Number(item.pnl || 0) < 0 ? "#d14b4b" : "#086b54",
+      "stroke-width": 2,
+    });
+  });
+
+  const tooltip = root.querySelector(".monitor-tooltip");
+  const showAt = (event) => {
+    const rect = svg.getBoundingClientRect();
+    const scaleX = width / rect.width;
+    const mouseX = (event.clientX - rect.left) * scaleX;
+    let nearest = 0;
+    let best = Infinity;
+    data.forEach((_, index) => {
+      const dist = Math.abs(xAt(index) - mouseX);
+      if (dist < best) {
+        best = dist;
+        nearest = index;
+      }
+    });
+    const item = data[nearest];
+    const x = xAt(nearest);
+    const y = yAt(Number(item.cumulative || 0));
+    crosshair.removeAttribute("hidden");
+    active.removeAttribute("hidden");
+    crosshair.setAttribute("x1", x);
+    crosshair.setAttribute("x2", x);
+    active.setAttribute("cx", x);
+    active.setAttribute("cy", y);
+    tooltip.hidden = false;
+    tooltip.innerHTML = `<strong>${escapeHtml(item.date)}</strong><span>${labels.dayPnl}: ${escapeHtml(item.pnlText || formatMoney(item.pnl))}</span><span>${labels.cumulative}: ${escapeHtml(item.cumulativeText || formatMoney(item.cumulative))}</span><span>${labels.trades}: ${escapeHtml(item.trades)}</span>`;
+    tooltip.style.left = `${Math.min(rect.width - 220, Math.max(12, (x / width) * rect.width + 12))}px`;
+    tooltip.style.top = `${Math.min(rect.height - 112, Math.max(10, (y / height) * rect.height - 58))}px`;
+  };
+  const hide = () => {
+    crosshair.setAttribute("hidden", "hidden");
+    active.setAttribute("hidden", "hidden");
+    tooltip.hidden = true;
+  };
+  svg.addEventListener("pointermove", showAt);
+  svg.addEventListener("pointerleave", hide);
+})();
+</script>
+{% endblock %}

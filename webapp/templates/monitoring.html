@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ "Мониторинг" if lang == "ru" else "Monitoring" }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Мониторинг Griders: анализ закрытых сделок, PnL, стоп-лоссов, тейк-профитов и статистики стратегий по торговым парам.{% else %}Griders monitoring for closed deals, PnL, stop losses, take profits, and strategy statistics by trading pair.{% endif %}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <section class="page-head">
   <div>
@@ -10,6 +12,7 @@
     <input type="hidden" name="connection_id" value="{{ selected_connection_id }}">
     <input type="hidden" name="start_date" value="{{ start_date }}">
     <input type="hidden" name="end_date" value="{{ end_date }}">
+    <input type="hidden" name="refresh" value="1">
     <button class="button secondary" type="submit">{{ "Обновить" if lang == "ru" else "Refresh" }}</button>
   </form>
 </section>

@@ -1,18 +1,22 @@
 {% extends "base.html" %}
 {% block title %}{{ "Тарифы" if lang == "ru" else "Plans" }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Тарифы Griders для стратегии GRID DCA: Бесплатный, Бесплатный Плюс, Старт, Старт Плюс, Премиум и Премиум Плюс с лимитами сделок, первым ордером и условиями подключения.{% else %}Griders plans for GRID DCA: Free, Free Plus, Start, Start Plus, Premium, and Premium Plus with deal limits, first-order limits, and connection terms.{% endif %}{% endblock %}
 {% block content %}
 <section class="page-head">
   <div>
     <p class="eyebrow">{{ "Доступ к стратегиям" if lang == "ru" else "Strategy access" }}</p>
     <h1>{{ "Тарифы Griders" if lang == "ru" else "Griders Plans" }}</h1>
     <p class="muted">
-      {{ "Сейчас для всех тарифов доступна стратегия GRID DCA. Платные тарифы расширяют лимиты по количеству сделок и максимальному первому ордеру." if lang == "ru" else "GRID DCA is currently available on all plans. Paid plans increase deal limits and the maximum first order." }}
+      {{ "Для всех тарифов доступна стратегия GRID DCA. Старшие тарифы расширяют лимиты сделок, первый ордер, доступные пары и способы расчёта объёма." if lang == "ru" else "GRID DCA is available on all plans. Higher plans expand deal limits, first-order limits, available pairs, and volume calculation modes." }}
     </p>
     <p class="tariff-telegram-note">
-      {{ "Для подключения тарифа, привяжите телеграм аккаунт в профиле." if lang == "ru" else "To enable a plan, link your Telegram account in your profile." }}
+      {{ "Для подключения платного тарифа привяжите Telegram аккаунт в профиле." if lang == "ru" else "To enable a paid plan, link your Telegram account in your profile." }}
     </p>
   </div>
 </section>
+
+{% set ref_link = "https://cryptorg.net/?ref=101002" %}
+{% set wallet_link = "https://t.me/wallet/start?startapp=ref-3-ibz8014rsac" %}
 
 <section class="tariff-grid">
   <article class="panel tariff-card">
@@ -24,14 +28,36 @@
     <p class="muted">{{ "Базовый тариф для аккуратного тестирования стратегии на небольшом депозите." if lang == "ru" else "Basic plan for careful strategy testing on a small deposit." }}</p>
     <ul class="tariff-list">
       <li>{{ "Рекомендуемый депозит: от 50 USDT" if lang == "ru" else "Recommended deposit: from 50 USDT" }}</li>
-      <li>{{ "Стратегия: GRID DCA" if lang == "ru" else "Strategy: GRID DCA" }}</li>
-      <li>{{ "Максимум активных сделок: 4" if lang == "ru" else "Max active deals: 4" }}</li>
-      <li>{{ "Лонг-сделки: до 2" if lang == "ru" else "Long deals: up to 2" }}</li>
-      <li>{{ "Шорт-сделки: до 2" if lang == "ru" else "Short deals: up to 2" }}</li>
-      <li>{{ "Первый ордер: 6 USDT" if lang == "ru" else "First order: 6 USDT" }}</li>
+      <li>{{ "Лимиты сделок: 4 / 4 / 4" if lang == "ru" else "Deal limits: 4 / 4 / 4" }}</li>
+      <li>{{ "Максимальный первый ордер: 6 USDT" if lang == "ru" else "Maximum first order: 6 USDT" }}</li>
+      <li>{{ "Расчёт первого ордера: ручной ввод" if lang == "ru" else "First-order calculation: manual input" }}</li>
       <li>{{ "Недоступные пары: BTCUSDT, ETHUSDT, SOLUSDT" if lang == "ru" else "Unavailable pairs: BTCUSDT, ETHUSDT, SOLUSDT" }}</li>
     </ul>
     <a class="button secondary" href="/strategies">{{ "Открыть настройки" if lang == "ru" else "Open settings" }}</a>
+  </article>
+
+  <article class="panel tariff-card">
+    <div class="tariff-head">
+      <p class="eyebrow">{{ "Больше возможностей" if lang == "ru" else "More room" }}</p>
+      <h2>{{ "Бесплатный Плюс" if lang == "ru" else "Free Plus" }}</h2>
+      <strong>0 USDT</strong>
+    </div>
+    <p class="muted">{{ "Бесплатный расширенный доступ для пользователей, которые подключают новый реферальный аккаунт Cryptorg." if lang == "ru" else "Expanded free access for users who connect a new referred Cryptorg account." }}</p>
+    <ul class="tariff-list">
+      <li>{{ "Рекомендуемый депозит: от 100 USDT" if lang == "ru" else "Recommended deposit: from 100 USDT" }}</li>
+      <li>{{ "Лимиты сделок: 6 / 6 / 6" if lang == "ru" else "Deal limits: 6 / 6 / 6" }}</li>
+      <li>{{ "Максимальный первый ордер: 12 USDT" if lang == "ru" else "Maximum first order: 12 USDT" }}</li>
+      <li>{{ "Расчёт первого ордера от депозита: от 1 до 10%" if lang == "ru" else "First order from deposit: 1% to 10%" }}</li>
+      <li>{{ "Недоступные пары: BTCUSDT, ETHUSDT, SOLUSDT" if lang == "ru" else "Unavailable pairs: BTCUSDT, ETHUSDT, SOLUSDT" }}</li>
+      <li>
+        {% if lang == "ru" %}
+          Для подключения зарегистрируйтесь по <a href="{{ ref_link }}" target="_blank" rel="noopener">реферальной ссылке Cryptorg</a> и подключите новый аккаунт к торговле на Griders.
+        {% else %}
+          To enable it, register via the <a href="{{ ref_link }}" target="_blank" rel="noopener">Cryptorg referral link</a> and connect the new account to Griders trading.
+        {% endif %}
+      </li>
+    </ul>
+    <a class="button secondary" href="{{ ref_link }}" target="_blank" rel="noopener">{{ "Зарегистрироваться по реферальной ссылке" if lang == "ru" else "Register via referral link" }}</a>
   </article>
 
   <article class="panel tariff-card featured">
@@ -39,49 +65,102 @@
       <p class="eyebrow">{{ "Оптимальный старт" if lang == "ru" else "Optimal start" }}</p>
       <h2>{{ "Старт" if lang == "ru" else "Start" }}</h2>
       <strong class="tariff-price">
-        <span class="old-price">19.5 USDT / {{ "мес." if lang == "ru" else "mo." }}</span>
-        <span class="new-price">13.65 USDT / {{ "мес." if lang == "ru" else "mo." }}</span>
+        <span class="old-price">19.5 USD / {{ "мес." if lang == "ru" else "mo." }}</span>
+        <span class="new-price">13.65 USD / {{ "мес." if lang == "ru" else "mo." }}</span>
       </strong>
+      <span class="tariff-wallet-note">
+        {% if lang == "ru" %}
+          Для оплаты в USDT требуется кошелёк в телеграм <button type="button" class="inline-link tariff-wallet-link" data-wallet-link>Wallet</button>
+        {% else %}
+          USDT payment requires the Telegram <button type="button" class="inline-link tariff-wallet-link" data-wallet-link>Wallet</button>
+        {% endif %}
+      </span>
       <span class="tariff-promo">{{ "Первый месяц скидка 30%" if lang == "ru" else "30% off the first month" }}</span>
     </div>
     <p class="muted">{{ "Тариф для пользователей, которые хотят увеличить лимиты при умеренном депозите." if lang == "ru" else "A plan for users who want higher limits with a moderate deposit." }}</p>
     <ul class="tariff-list">
-      <li>{{ "Рекомендуемый депозит: от 500 USDT" if lang == "ru" else "Recommended deposit: from 500 USDT" }}</li>
-      <li class="tariff-free-days">{{ "3 дня бесплатно, 1й месяц 13.65 USDT/мес, далее 19.5 USDT/мес" if lang == "ru" else "3 days free, first month 13.65 USDT/mo, then 19.5 USDT/mo" }}</li>
-      <li>{{ "Стратегия: GRID DCA" if lang == "ru" else "Strategy: GRID DCA" }}</li>
-      <li>{{ "Максимум активных сделок: 8" if lang == "ru" else "Max active deals: 8" }}</li>
-      <li>{{ "Лонг-сделки: до 4" if lang == "ru" else "Long deals: up to 4" }}</li>
-      <li>{{ "Шорт-сделки: до 4" if lang == "ru" else "Short deals: up to 4" }}</li>
-      <li>{{ "Максимальный первый ордер: 60 USDT" if lang == "ru" else "Maximum first order: 60 USDT" }}</li>
+      <li>{{ "Рекомендуемый депозит: от 500 USD" if lang == "ru" else "Recommended deposit: from 500 USD" }}</li>
+      <li class="tariff-free-days">{{ "3 дня бесплатно, 1й месяц 13.65 USD/мес, далее 19.5 USD/мес" if lang == "ru" else "3 days free, first month 13.65 USD/mo, then 19.5 USD/mo" }}</li>
+      <li>{{ "Лимиты сделок: 8 / 8 / 8" if lang == "ru" else "Deal limits: 8 / 8 / 8" }}</li>
+      <li>{{ "Максимальный первый ордер: 60 USD" if lang == "ru" else "Maximum first order: 60 USD" }}</li>
+      <li>{{ "Расчёт первого ордера от депозита доступен" if lang == "ru" else "First-order calculation from deposit is available" }}</li>
       <li>{{ "Недоступная пара: BTCUSDT" if lang == "ru" else "Unavailable pair: BTCUSDT" }}</li>
     </ul>
-    <a
-      class="button primary"
-      href="https://t.me/tribute/app?startapp=sXuB"
-      target="_blank"
-      rel="noopener"
-      data-tariff-subscribe
-      data-telegram-linked="{{ 1 if user and user.telegram_user_id else 0 }}"
-    >{{ "Подключить" if lang == "ru" else "Enable" }}</a>
+    <a class="button primary" href="https://t.me/tribute/app?startapp=sXuB" target="_blank" rel="noopener" data-tariff-subscribe data-telegram-linked="{{ 1 if user and user.telegram_user_id else 0 }}">{{ "Подключить" if lang == "ru" else "Enable" }}</a>
   </article>
 
   <article class="panel tariff-card">
     <div class="tariff-head">
+      <p class="eyebrow">{{ "Старт с BTC" if lang == "ru" else "Start with BTC" }}</p>
+      <h2>{{ "Старт Плюс" if lang == "ru" else "Start Plus" }}</h2>
+      <strong>{{ "Условия Старт Плюс" if lang == "ru" else "Start Plus terms" }}</strong>
+    </div>
+    <p class="muted">{{ "Расширенный стартовый тариф для большего депозита и полного списка торговых пар GRID DCA." if lang == "ru" else "Expanded Start plan for a larger deposit and the full GRID DCA pair list." }}</p>
+    <ul class="tariff-list">
+      <li>{{ "Рекомендуемый депозит: от 1000 USDT" if lang == "ru" else "Recommended deposit: from 1000 USDT" }}</li>
+      <li>{{ "Лимиты сделок: 10 / 10 / 10" if lang == "ru" else "Deal limits: 10 / 10 / 10" }}</li>
+      <li>{{ "Максимальный первый ордер: 120 USDT" if lang == "ru" else "Maximum first order: 120 USDT" }}</li>
+      <li>{{ "Доступны все торговые пары, включая BTCUSDT" if lang == "ru" else "All trading pairs are available, including BTCUSDT" }}</li>
+      <li>
+        {% if lang == "ru" %}
+          Для подключения оплатите тариф Старт, зарегистрируйтесь по <a href="{{ ref_link }}" target="_blank" rel="noopener">реферальной ссылке Cryptorg</a> и подключите новый аккаунт к торговле на Griders.
+        {% else %}
+          To enable it, pay for Start, register via the <a href="{{ ref_link }}" target="_blank" rel="noopener">Cryptorg referral link</a>, and connect the new account to Griders trading.
+        {% endif %}
+      </li>
+    </ul>
+    <a class="button secondary" href="{{ ref_link }}" target="_blank" rel="noopener">{{ "Зарегистрироваться по реферальной ссылке" if lang == "ru" else "Register via referral link" }}</a>
+  </article>
+
+  <article class="panel tariff-card featured">
+    <div class="tariff-head">
       <p class="eyebrow">{{ "Расширенные лимиты" if lang == "ru" else "Expanded limits" }}</p>
       <h2>{{ "Премиум" if lang == "ru" else "Premium" }}</h2>
-      <strong>{{ "Скоро" if lang == "ru" else "Soon" }}</strong>
+      <strong class="tariff-price">
+        <span class="new-price">150 USD / {{ "мес." if lang == "ru" else "mo." }}</span>
+      </strong>
+      <span class="tariff-wallet-note">
+        {% if lang == "ru" %}
+          Для оплаты в USDT требуется кошелёк в телеграм <button type="button" class="inline-link tariff-wallet-link" data-wallet-link>Wallet</button>
+        {% else %}
+          USDT payment requires the Telegram <button type="button" class="inline-link tariff-wallet-link" data-wallet-link>Wallet</button>
+        {% endif %}
+      </span>
+      <span class="tariff-promo">{{ "При действующем тарифе Старт скидка на переход 20% на первый месяц по запросу" if lang == "ru" else "With an active Start plan, 20% off the first Premium month by request" }}</span>
     </div>
     <p class="muted">{{ "Тариф для более крупного депозита и большего количества одновременных сделок." if lang == "ru" else "A plan for a larger deposit and more simultaneous deals." }}</p>
     <ul class="tariff-list">
-      <li>{{ "Стратегия: GRID DCA" if lang == "ru" else "Strategy: GRID DCA" }}</li>
-      <li>{{ "Максимум активных сделок: 16" if lang == "ru" else "Max active deals: 16" }}</li>
-      <li>{{ "Лонг-сделки: до 8" if lang == "ru" else "Long deals: up to 8" }}</li>
-      <li>{{ "Шорт-сделки: до 8" if lang == "ru" else "Short deals: up to 8" }}</li>
+      <li>{{ "Стоимость тарифа: 150 USD / мес." if lang == "ru" else "Plan price: 150 USD / mo." }}</li>
+      <li>{{ "При действующем тарифе Старт скидка на переход на Премиум 20% на первый месяц по запросу." if lang == "ru" else "With an active Start plan, the Premium upgrade discount is 20% for the first month by request." }}</li>
+      <li>{{ "Лимиты сделок: 12 / 12 / 12" if lang == "ru" else "Deal limits: 12 / 12 / 12" }}</li>
       <li>{{ "Максимальный первый ордер: 600 USDT" if lang == "ru" else "Maximum first order: 600 USDT" }}</li>
+      <li>{{ "Расчёт первого ордера от депозита доступен" if lang == "ru" else "First-order calculation from deposit is available" }}</li>
       <li>{{ "Доступны все торговые пары из списка GRID DCA" if lang == "ru" else "All GRID DCA trading pairs are available" }}</li>
-      <li>{{ "Подходит только для пользователей, понимающих нагрузку DCA-сетки на депозит." if lang == "ru" else "Suitable only for users who understand the deposit load of a DCA grid." }}</li>
     </ul>
-    <button class="button secondary tariff-disabled-button" type="button" disabled>{{ "Подключить" if lang == "ru" else "Enable" }}</button>
+    <a class="button primary" href="https://t.me/tribute/app?startapp=sZAb" target="_blank" rel="noopener" data-tariff-subscribe data-telegram-linked="{{ 1 if user and user.telegram_user_id else 0 }}">{{ "Подключить" if lang == "ru" else "Enable" }}</a>
+  </article>
+
+  <article class="panel tariff-card">
+    <div class="tariff-head">
+      <p class="eyebrow">{{ "Максимальный доступ" if lang == "ru" else "Maximum access" }}</p>
+      <h2>{{ "Премиум Плюс" if lang == "ru" else "Premium Plus" }}</h2>
+      <strong>{{ "Условия Премиум Плюс" if lang == "ru" else "Premium Plus terms" }}</strong>
+    </div>
+    <p class="muted">{{ "Тариф для крупных депозитов, расширенных лимитов и гибкого управления сеткой." if lang == "ru" else "A plan for large deposits, expanded limits, and flexible grid management." }}</p>
+    <ul class="tariff-list">
+      <li>{{ "Лимиты сделок: 40 / 40 / 40" if lang == "ru" else "Deal limits: 40 / 40 / 40" }}</li>
+      <li>{{ "Максимальный первый ордер: 2000 USDT" if lang == "ru" else "Maximum first order: 2000 USDT" }}</li>
+      <li>{{ "Расчёт первого ордера от депозита: до 15%" if lang == "ru" else "First order from deposit: up to 15%" }}</li>
+      <li>{{ "Доступны все торговые пары" if lang == "ru" else "All trading pairs are available" }}</li>
+      <li>
+        {% if lang == "ru" %}
+          Для подключения оплатите тариф Премиум, зарегистрируйтесь по <a href="{{ ref_link }}" target="_blank" rel="noopener">реферальной ссылке Cryptorg</a> и подключите новый аккаунт к торговле на Griders.
+        {% else %}
+          To enable it, pay for Premium, register via the <a href="{{ ref_link }}" target="_blank" rel="noopener">Cryptorg referral link</a>, and connect the new account to Griders trading.
+        {% endif %}
+      </li>
+    </ul>
+    <a class="button secondary" href="{{ ref_link }}" target="_blank" rel="noopener">{{ "Зарегистрироваться по реферальной ссылке" if lang == "ru" else "Register via referral link" }}</a>
   </article>
 </section>
 
@@ -92,7 +171,12 @@
         return;
       }
       event.preventDefault();
-      alert("{{ 'Для подключения тарифа, привяжите телеграм аккаунт в профиле' if lang == 'ru' else 'To enable a plan, link your Telegram account in your profile' }}");
+      alert("{{ 'Для подключения тарифа привяжите Telegram аккаунт в профиле.' if lang == 'ru' else 'To enable a plan, link your Telegram account in your profile.' }}");
+    });
+  });
+  document.querySelectorAll("[data-wallet-link]").forEach((button) => {
+    button.addEventListener("click", () => {
+      window.open("{{ wallet_link }}", "_blank", "noopener");
     });
   });
 </script>

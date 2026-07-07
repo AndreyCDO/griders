@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.signals.title }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Журнал сигналов Griders: история входящих сигналов TradingView, статусы отправки в Cryptorg, причины пропусков и ошибки исполнения.{% else %}Griders signal log with TradingView signal history, Cryptorg delivery statuses, skip reasons, and execution errors.{% endif %}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <section class="page-head">
   <div>

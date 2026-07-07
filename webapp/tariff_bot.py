@@ -113,6 +113,9 @@ async def sync_user_tariff(user: dict[str, Any], notify_chat_id: int | None = No
         return {"ok": False, "reason": "telegram account is not verified"}
 
     current_plan = str(user.get("plan") or "free")
+    if current_plan in {"free_plus", "start_plus", "premium_plus"}:
+        execute("UPDATE ai_users SET telegram_last_checked_at=NOW() WHERE id=%s", (int(user["id"]),))
+        return {"ok": True, "plan": current_plan, "changed": False, "manual_plus_plan": True}
     plan = await _subscription_plan(telegram_user_id, current_plan)
     if plan is None:
         execute("UPDATE ai_users SET telegram_last_checked_at=NOW() WHERE id=%s", (int(user["id"]),))

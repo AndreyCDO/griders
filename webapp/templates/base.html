@@ -16,13 +16,22 @@
     })();
   </script>
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <meta name="description" content="{% block meta_description %}{% if lang == "ru" %}Griders помогает запускать и контролировать стратегии автотрейдинга для Cryptorg Ghost Bot: сигналы TradingView, DCA-сетка, лимиты риска и мониторинг сделок.{% else %}Griders helps run and monitor automated trading strategies for Cryptorg Ghost Bot: TradingView signals, DCA grids, risk limits, and deal monitoring.{% endif %}{% endblock %}">
+  {% block robots %}{% endblock %}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ app_name }}">
+  <meta property="og:title" content="{{ self.title() | striptags | trim }}">
+  <meta property="og:description" content="{% if lang == "ru" %}Griders помогает запускать и контролировать стратегии автотрейдинга для Cryptorg Ghost Bot: сигналы TradingView, DCA-сетка, лимиты риска и мониторинг сделок.{% else %}Griders helps run and monitor automated trading strategies for Cryptorg Ghost Bot: TradingView signals, DCA grids, risk limits, and deal monitoring.{% endif %}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="{{ self.title() | striptags | trim }}">
+  <meta name="twitter:description" content="{% if lang == "ru" %}Griders помогает запускать и контролировать стратегии автотрейдинга для Cryptorg Ghost Bot: сигналы TradingView, DCA-сетка, лимиты риска и мониторинг сделок.{% else %}Griders helps run and monitor automated trading strategies for Cryptorg Ghost Bot: TradingView signals, DCA grids, risk limits, and deal monitoring.{% endif %}">
   <link rel="icon" href="/favicon.ico?v=20260601" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon/favicon-32x32.png?v=20260601">
   <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon/favicon-16x16.png?v=20260601">
   <link rel="apple-touch-icon" sizes="180x180" href="/static/favicon/apple-touch-icon.png?v=20260601">
   <link rel="manifest" href="/site.webmanifest?v=20260601">
   <meta name="theme-color" content="#0b8f70" id="theme-color-meta">
-  <link rel="stylesheet" href="/static/app.css?v=20260611-backtest-links">
+  <link rel="stylesheet" href="/static/app.css?v=20260629-admin-view">
   <!-- Yandex.Metrika counter -->
   <script type="text/javascript">
       (function(m,e,t,r,i,k,a){
@@ -49,6 +58,9 @@
         <a href="/strategies">{{ ui.nav.strategies }}</a>
         <a href="/signals">{{ ui.nav.signals }}</a>
         <a href="/monitoring">{{ "Мониторинг" if lang == "ru" else "Monitoring" }}</a>
+        {% if viewer_access.is_admin %}
+          <a href="/admin/analytics">{{ "Аналитика" if lang == "ru" else "Analytics" }}</a>
+        {% endif %}
         <a href="/tariffs">{{ "Тарифы" if lang == "ru" else "Plans" }}</a>
         <a href="/docs">{{ ui.nav.docs }}</a>
         <a href="/profile">{{ "Профиль" if lang == "ru" else "Profile" }}</a>
@@ -88,6 +100,20 @@
     <div class="beta-banner">Сервис работает в режиме бета тестирования.</div>
   </div>
 
+  {% if admin_view.active %}
+    <div class="admin-view-banner-wrap">
+      <div class="admin-view-banner">
+        <div>
+          <strong>{{ "Просмотр профиля пользователя" if lang == "ru" else "Viewing user profile" }}</strong>
+          <span>{{ admin_view.target.email }}</span>
+        </div>
+        <form method="post" action="/admin/view/exit" data-admin-view-allow>
+          <button class="button secondary" type="submit">{{ "Вернуться в профиль админа" if lang == "ru" else "Return to admin profile" }}</button>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+
   <main class="shell">
     {% block content %}{% endblock %}
   </main>
@@ -100,6 +126,30 @@
       <a class="footer-email" href="mailto:support@griders.ru">support@griders.ru</a>
     </div>
   </footer>
+  {% if admin_view.active %}
+  <script>
+    (function () {
+      document.documentElement.dataset.adminView = "1";
+      document.querySelectorAll("form").forEach(function (form) {
+        if (form.hasAttribute("data-admin-view-allow")) {
+          return;
+        }
+        var method = (form.getAttribute("method") || "get").toLowerCase();
+        if (method !== "post") {
+          return;
+        }
+        form.classList.add("admin-readonly-form");
+        form.addEventListener("submit", function (event) {
+          event.preventDefault();
+        });
+        form.querySelectorAll("input, select, textarea, button").forEach(function (field) {
+          field.disabled = true;
+          field.setAttribute("aria-disabled", "true");
+        });
+      });
+    })();
+  </script>
+  {% endif %}
   <script>
     (function () {
       var root = document.documentElement;

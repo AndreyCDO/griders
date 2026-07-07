@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.auth.register_title }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Регистрация в Griders для подключения Cryptorg Ghost Bot, настройки стратегии GRID DCA, лимитов риска и мониторинга сделок.{% else %}Create a Griders account to connect Cryptorg Ghost Bot, configure the GRID DCA strategy, set risk limits, and monitor deals.{% endif %}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <section class="auth-wrap">
   <form class="auth-box" method="post" action="/register">

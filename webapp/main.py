@@ -24,9 +24,9 @@ import ghost_webhook
 
 from . import settings
 from .agent import agent_loop, risk_pause_status, scan_once
-from .cryptorg_monitor import closed_pnl_history_page, extract_usdt_balance, positions, wallet_balance
+from .cryptorg_monitor import closed_pnl_history_page, extract_usdt_balance, open_orders, positions, wallet_balance
 from .db import execute, fetch_all, fetch_one, init_db
-from .grid_dca_webhook import handle_tradingview_grid_dca
+from .grid_dca_webhook import enqueue_tradingview_grid_dca, next_pending_tradingview_grid_event_id, process_tradingview_grid_dca_event
 from .i18n import LANG_COOKIE, normalize_lang, ui
 from .launch_guard import release_pair_launch, release_strategy_side_launch, reserve_pair_launch, reserve_strategy_side_launch
 from .mailer import send_email_verification, send_password_reset, smtp_configured
@@ -55,6 +55,7 @@ BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
 TWOFA_PENDING_COOKIE = "griders_2fa_pending"
 SELECTED_CONNECTION_COOKIE = "griders_connection_id"
+ADMIN_VIEW_USER_COOKIE = "griders_admin_view_user_id"
 DEFAULT_TIMEZONE = "Europe/Moscow"
 CONNECTION_VIDEO_RUTUBE_URL = "https://rutube.ru/video/private/40c07f768175b6710b6425150e3b0c86/?p=X1U8JjmvHkPrJIx5tV5VGw"
 CONNECTION_VIDEO_YOUTUBE_URL = "https://youtu.be/hLUOPT37f2M"
@@ -83,6 +84,7 @@ PREFERRED_TIMEZONES = [
     "UTC",
 ]
 TRADINGVIEW_QUEUE_MAXSIZE = 500
+TRADINGVIEW_GRID_WORKERS = 3
 MARKET_SHOCK_QUEUE_MAXSIZE = 1000
 MARKET_SHOCK_QUEUE_TRIM_AT = 500
 MARKET_SHOCK_QUEUE_KEEP = 100
@@ -90,6 +92,11 @@ MARKET_SHOCK_WORKER_PAUSE_SECONDS = 0.25
 MARKET_SHOCK_PROCESSING_ENABLED = False
 ADMIN_STATS_BACKGROUND_ENABLED = True
 ADMIN_STATS_MANUAL_USER_PAUSE_SECONDS = 3.0
+GRIDERS_OPEN_DEAL_SYNC_ENABLED = True
+GRIDERS_OPEN_DEAL_SYNC_SECONDS = 180
+GRIDERS_OPEN_DEAL_CLEANUP_GRACE_MINUTES = 90
+MONITORING_ACCOUNT_CACHE_SECONDS = 180
+MONITORING_DATA_START_DATE = datetime(2026, 6, 7).date()
 PUBLIC_HTTPS_HOSTS = {"griders.ru", "www.griders.ru"}
 tradingview_grid_queue: asyncio.Queue[dict] | None = None
 market_shock_queue: asyncio.Queue[dict] | None = None
@@ -101,12 +108,25 @@ PLAN_LIMITS = {
         "name_ru": "Бесплатный",
         "name_en": "Free",
         "max_active_deals": 4,
-        "max_long_deals": 2,
-        "max_short_deals": 2,
+        "max_long_deals": 4,
+        "max_short_deals": 4,
         "max_first_order": 6.0,
         "recommended_balance": 50.0,
         "can_use_deposit_pct": False,
         "max_risk_pct": settings.MAX_STRATEGY_RISK_PCT,
+        "disabled_pairs": settings.FREE_PLAN_DISABLED_PAIRS,
+    },
+    "free_plus": {
+        "code": "free_plus",
+        "name_ru": "Бесплатный Плюс",
+        "name_en": "Free Plus",
+        "max_active_deals": 6,
+        "max_long_deals": 6,
+        "max_short_deals": 6,
+        "max_first_order": 12.0,
+        "recommended_balance": 100.0,
+        "can_use_deposit_pct": True,
+        "max_risk_pct": 10.0,
         "disabled_pairs": settings.FREE_PLAN_DISABLED_PAIRS,
     },
     "start": {
@@ -114,28 +134,61 @@ PLAN_LIMITS = {
         "name_ru": "Старт",
         "name_en": "Start",
         "max_active_deals": 8,
-        "max_long_deals": 4,
-        "max_short_deals": 4,
+        "max_long_deals": 8,
+        "max_short_deals": 8,
         "max_first_order": 60.0,
         "recommended_balance": 500.0,
         "can_use_deposit_pct": True,
         "max_risk_pct": settings.MAX_STRATEGY_RISK_PCT,
         "disabled_pairs": settings.START_PLAN_DISABLED_PAIRS,
     },
+    "start_plus": {
+        "code": "start_plus",
+        "name_ru": "Старт Плюс",
+        "name_en": "Start Plus",
+        "max_active_deals": 10,
+        "max_long_deals": 10,
+        "max_short_deals": 10,
+        "max_first_order": 120.0,
+        "recommended_balance": 1000.0,
+        "can_use_deposit_pct": True,
+        "max_risk_pct": settings.MAX_STRATEGY_RISK_PCT,
+        "disabled_pairs": set(),
+    },
     "premium": {
         "code": "premium",
         "name_ru": "Премиум",
         "name_en": "Premium",
-        "max_active_deals": 16,
-        "max_long_deals": 8,
-        "max_short_deals": 8,
+        "max_active_deals": 12,
+        "max_long_deals": 12,
+        "max_short_deals": 12,
         "max_first_order": 600.0,
         "recommended_balance": None,
         "can_use_deposit_pct": True,
         "max_risk_pct": settings.MAX_STRATEGY_RISK_PCT,
         "disabled_pairs": set(),
     },
+    "premium_plus": {
+        "code": "premium_plus",
+        "name_ru": "Премиум Плюс",
+        "name_en": "Premium Plus",
+        "max_active_deals": 40,
+        "max_long_deals": 40,
+        "max_short_deals": 40,
+        "max_first_order": 2000.0,
+        "recommended_balance": None,
+        "can_use_deposit_pct": True,
+        "max_risk_pct": 15.0,
+        "disabled_pairs": set(),
+    },
 }
+BASE_PLAN_OPTIONS = ("free", "start", "premium")
+PLUS_PLAN_BY_BASE = {
+    "free": "free_plus",
+    "start": "start_plus",
+    "premium": "premium_plus",
+}
+BASE_PLAN_BY_PLUS = {plus: base for base, plus in PLUS_PLAN_BY_BASE.items()}
 ADMIN_PLAN_LIMITS = {
     **PLAN_LIMITS["premium"],
     "code": "admin",
@@ -194,35 +247,63 @@ async def refresh_idle_session(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def block_admin_view_writes(request: Request, call_next):
+    allowed_paths = {"/admin/view/exit", "/logout"}
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path not in allowed_paths and _admin_view_active(request):
+        redirect_to = request.headers.get("referer") or "/dashboard"
+        return RedirectResponse(redirect_to, status_code=303)
+    return await call_next(request)
+
+
 @app.on_event("startup")
 async def on_startup() -> None:
     global tradingview_grid_queue, market_shock_queue
     init_db()
     tradingview_grid_queue = asyncio.Queue(maxsize=TRADINGVIEW_QUEUE_MAXSIZE)
     market_shock_queue = asyncio.Queue(maxsize=MARKET_SHOCK_QUEUE_MAXSIZE)
-    asyncio.create_task(_tradingview_grid_worker())
+    for worker_id in range(TRADINGVIEW_GRID_WORKERS):
+        asyncio.create_task(_tradingview_grid_worker(worker_id + 1))
     if MARKET_SHOCK_PROCESSING_ENABLED:
         asyncio.create_task(_market_shock_worker())
     if settings.AGENT_ENABLED:
         asyncio.create_task(agent_loop())
     if ADMIN_STATS_BACKGROUND_ENABLED:
         asyncio.create_task(_admin_stats_loop())
+    if GRIDERS_OPEN_DEAL_SYNC_ENABLED:
+        asyncio.create_task(_griders_open_deal_sync_loop())
+    if settings.GRID_DCA_ACCOUNT_CACHE_ENABLED:
+        asyncio.create_task(_grid_dca_account_cache_loop())
     asyncio.create_task(_daily_trade_stats_loop())
     asyncio.create_task(tariff_sync_loop())
 
 
-async def _tradingview_grid_worker() -> None:
+async def _tradingview_grid_worker(worker_id: int) -> None:
     while True:
         if tradingview_grid_queue is None:
             await asyncio.sleep(1)
             continue
-        payload = await tradingview_grid_queue.get()
+        queued_item = False
         try:
-            await handle_tradingview_grid_dca(payload)
+            event_id = await asyncio.wait_for(tradingview_grid_queue.get(), timeout=2)
+            queued_item = True
+        except asyncio.TimeoutError:
+            try:
+                event_id = next_pending_tradingview_grid_event_id()
+            except Exception:
+                logger.exception("TradingView GRID DCA worker %s failed to poll pending events", worker_id)
+                await asyncio.sleep(2)
+                continue
+            if event_id is None:
+                continue
+        try:
+            result = await process_tradingview_grid_dca_event(int(event_id))
+            logger.info("TradingView GRID DCA queue item processed by worker %s: %s", worker_id, result)
         except Exception:
-            logger.exception("TradingView GRID DCA queue item failed")
+            logger.exception("TradingView GRID DCA queue item failed in worker %s", worker_id)
         finally:
-            tradingview_grid_queue.task_done()
+            if queued_item:
+                tradingview_grid_queue.task_done()
 
 
 async def _market_shock_worker() -> None:
@@ -238,6 +319,132 @@ async def _market_shock_worker() -> None:
         finally:
             market_shock_queue.task_done()
             await asyncio.sleep(MARKET_SHOCK_WORKER_PAUSE_SECONDS)
+
+
+async def _grid_dca_account_cache_loop() -> None:
+    await asyncio.sleep(2)
+    while True:
+        try:
+            updated = await _refresh_grid_dca_account_cache_once()
+            if updated:
+                logger.info("Updated GRID DCA account cache for %s connections", updated)
+        except Exception:
+            logger.exception("GRID DCA account cache refresh failed")
+        await asyncio.sleep(max(5, int(settings.GRID_DCA_ACCOUNT_CACHE_SYNC_SECONDS)))
+
+
+async def _refresh_grid_dca_account_cache_once() -> int:
+    rows = fetch_all(
+        """
+        SELECT DISTINCT c.id, c.user_id, c.bybit_api_key, c.bybit_api_secret_encrypted
+        FROM ai_user_connections c
+        JOIN ai_user_strategy_settings s ON s.connection_id = c.id
+        WHERE c.is_active = 1
+          AND s.enabled = 1
+          AND s.auto_trade = 1
+          AND s.strategy_code IN ('grid_dca_v2', 'grid_dca_v3')
+          AND c.bybit_api_key <> ''
+          AND c.bybit_api_secret_encrypted IS NOT NULL
+        ORDER BY COALESCE(c.last_positions_checked_at, CAST('1970-01-01 00:00:00' AS DATETIME)) ASC, c.id ASC
+        """,
+    )
+    if not rows:
+        return 0
+    semaphore = asyncio.Semaphore(max(1, int(settings.GRID_DCA_ACCOUNT_CACHE_CONCURRENCY)))
+    updated = 0
+
+    async def refresh(row: dict) -> bool:
+        async with semaphore:
+            return await _refresh_grid_dca_connection_cache(row)
+
+    results = await asyncio.gather(*(refresh(row) for row in rows), return_exceptions=True)
+    for result in results:
+        if result is True:
+            updated += 1
+        elif isinstance(result, Exception):
+            logger.warning("GRID DCA account cache worker failed: %s", result)
+    return updated
+
+
+async def _refresh_grid_dca_connection_cache(row: dict) -> bool:
+    connection_id = int(row["id"])
+    user_id = int(row["user_id"])
+    api_key = row.get("bybit_api_key") or ""
+    try:
+        api_secret = decrypt_secret(row.get("bybit_api_secret_encrypted"))
+    except Exception as exc:
+        execute(
+            "UPDATE ai_user_connections SET last_error=%s, last_checked_at=NOW() WHERE id=%s",
+            (str(exc), connection_id),
+        )
+        return False
+    if not api_key or not api_secret:
+        return False
+    try:
+        wallet, position_rows = await asyncio.wait_for(
+            asyncio.gather(wallet_balance(api_key, api_secret), positions(api_key, api_secret)),
+            timeout=15,
+        )
+        balance = extract_usdt_balance(wallet)
+        risk_reason = None
+        try:
+            pause = await asyncio.wait_for(risk_pause_status(api_key, api_secret, balance), timeout=15)
+            if pause and not _risk_pause_override_active(user_id):
+                risk_reason = pause["reason"]
+        except Exception as exc:
+            logger.warning("GRID DCA risk cache failed for user %s connection %s: %s", user_id, connection_id, exc)
+        _store_connection_account_cache(connection_id, balance, position_rows, risk_reason)
+        return True
+    except Exception as exc:
+        execute(
+            "UPDATE ai_user_connections SET last_error=%s, last_checked_at=NOW() WHERE id=%s",
+            (str(exc), connection_id),
+        )
+        return False
+
+
+def _store_connection_account_cache(connection_id: int, balance: float, position_rows: list[dict], risk_reason: str | None = None) -> None:
+    execute(
+        """
+        UPDATE ai_user_connections
+        SET last_balance=%s,
+            last_error=NULL,
+            last_checked_at=NOW(),
+            last_positions_snapshot=%s,
+            last_positions_checked_at=NOW(),
+            last_risk_pause_reason=%s,
+            last_risk_pause_checked_at=NOW()
+        WHERE id=%s
+        """,
+        (
+            balance,
+            json.dumps(position_rows or [], ensure_ascii=False, default=str),
+            risk_reason,
+            connection_id,
+        ),
+    )
+
+
+def _store_connection_positions_cache(connection_id: int, position_rows: list[dict]) -> None:
+    execute(
+        """
+        UPDATE ai_user_connections
+        SET last_positions_snapshot=%s,
+            last_positions_checked_at=NOW()
+        WHERE id=%s
+        """,
+        (
+            json.dumps(position_rows or [], ensure_ascii=False, default=str),
+            connection_id,
+        ),
+    )
+
+
+def _risk_pause_override_active(user_id: int) -> bool:
+    return bool(fetch_one(
+        "SELECT user_id FROM ai_risk_pause_overrides WHERE user_id=%s AND override_until > NOW()",
+        (user_id,),
+    ))
 
 
 def _drop_old_queue_items(queue: asyncio.Queue, keep: int) -> int:
@@ -261,29 +468,72 @@ def _trim_market_shock_queue_if_needed() -> int:
     return dropped
 
 
-def current_user(request: Request) -> dict | None:
+def _session_user(request: Request) -> dict | None:
     uid = parse_session(request.cookies.get(settings.SESSION_COOKIE))
     if not uid:
         return None
     return fetch_one("SELECT * FROM ai_users WHERE id=%s", (uid,))
 
 
+def _admin_view_target_id(request: Request) -> int:
+    try:
+        return int(request.cookies.get(ADMIN_VIEW_USER_COOKIE) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def current_user(request: Request) -> dict | None:
+    viewer = _session_user(request)
+    if not viewer:
+        return None
+    if _user_access(viewer)["is_admin"]:
+        target_id = _admin_view_target_id(request)
+        if target_id and target_id != int(viewer["id"]):
+            target = fetch_one("SELECT * FROM ai_users WHERE id=%s", (target_id,))
+            if target:
+                return target
+    return viewer
+
+
+def _admin_view_context(request: Request) -> dict:
+    viewer = _session_user(request)
+    target = current_user(request)
+    active = bool(
+        viewer
+        and target
+        and _user_access(viewer)["is_admin"]
+        and int(viewer["id"]) != int(target["id"])
+        and _admin_view_target_id(request) == int(target["id"])
+    )
+    return {"active": active, "viewer": viewer, "target": target}
+
+
+def _admin_view_active(request: Request) -> bool:
+    return bool(_admin_view_context(request)["active"])
+
+
 def require_user(request: Request) -> dict | RedirectResponse:
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    _apply_user_plan_constraints(user)
+    if not _admin_view_active(request):
+        _apply_user_plan_constraints(user)
     return user
 
 
 def render(request: Request, template: str, context: dict | None = None, status_code: int = 200) -> HTMLResponse:
     lang = _lang(request)
+    viewer = _session_user(request)
     user = current_user(request)
+    admin_view = _admin_view_context(request)
     data = {
         "request": request,
         "app_name": settings.APP_NAME,
         "user": user,
         "user_access": _user_access(user),
+        "viewer_user": viewer,
+        "viewer_access": _user_access(viewer),
+        "admin_view": admin_view,
         "user_timezone": _user_timezone_name(user),
         "lang": lang,
         "ui": ui(lang),
@@ -356,10 +606,31 @@ def _normalized_plan(plan: str | None) -> str:
     return value if value in PLAN_LIMITS else "free"
 
 
+def _base_plan(plan: str | None) -> str:
+    plan_code = _normalized_plan(plan)
+    return BASE_PLAN_BY_PLUS.get(plan_code, plan_code)
+
+
+def _referral_verified(user: dict | None) -> bool:
+    try:
+        return bool(int((user or {}).get("referral_verified") or 0))
+    except (TypeError, ValueError):
+        return False
+
+
+def _effective_plan(user: dict | None) -> str:
+    if str((user or {}).get("role") or "user") == "admin":
+        return "premium_plus"
+    plan = _base_plan((user or {}).get("plan"))
+    if _referral_verified(user):
+        return PLUS_PLAN_BY_BASE.get(plan, plan)
+    return plan
+
+
 def _plan_limits(user: dict | None) -> dict:
     if str((user or {}).get("role") or "user") == "admin":
         return dict(ADMIN_PLAN_LIMITS)
-    return dict(PLAN_LIMITS[_normalized_plan((user or {}).get("plan"))])
+    return dict(PLAN_LIMITS[_effective_plan(user)])
 
 
 def _plan_disabled_pairs(user: dict | None) -> set[str]:
@@ -380,8 +651,45 @@ def _manual_first_order_cap(user: dict | None, conn: dict | None) -> float:
     return min(plan_cap, deposit_cap)
 
 
+def _is_free_plus_plan(user: dict | None) -> bool:
+    return _effective_plan(user) == "free_plus"
+
+
+def _free_plus_first_order_cap(user: dict | None, conn: dict | None) -> float:
+    if not _is_free_plus_plan(user):
+        return float(_plan_limits(user).get("max_first_order") or settings.MIN_FIRST_ORDER_VOLUME)
+    balance = float((conn or {}).get("last_balance") or 0)
+    if balance <= 0:
+        return settings.MIN_FIRST_ORDER_VOLUME
+    deposit_cap = balance * (settings.MANUAL_FIRST_ORDER_MAX_DEPOSIT_PCT / 100.0)
+    return max(settings.MIN_FIRST_ORDER_VOLUME, min(float(_plan_limits(user)["max_first_order"]), deposit_cap))
+
+
+def _strategy_minimum_margin_status(user: dict | None, conn: dict | None, strategy: dict | None) -> dict:
+    balance = max(0.0, float((conn or {}).get("last_balance") or 0))
+    leverage = max(1, int((strategy or {}).get("leverage") or 10))
+    limits = _plan_limits(user)
+    is_admin = str((user or {}).get("role") or "user") == "admin"
+    max_first_order = float(limits.get("max_first_order") or settings.MIN_FIRST_ORDER_VOLUME)
+    first_order = max(float((strategy or {}).get("min_order_volume") or settings.MIN_FIRST_ORDER_VOLUME), settings.MIN_FIRST_ORDER_VOLUME)
+    if not is_admin:
+        first_order = min(first_order, max_first_order)
+    required_margin = first_order / leverage
+    return {
+        "can_open": bool(balance > 0 and required_margin > 0 and balance >= required_margin),
+        "balance": balance,
+        "first_order": first_order,
+        "required_margin": required_margin,
+    }
+
+
 def _plan_label(plan: str | None, lang: str = "ru") -> str:
     limits = PLAN_LIMITS.get(_normalized_plan(plan), PLAN_LIMITS["free"])
+    return limits["name_ru"] if normalize_lang(lang) == "ru" else limits["name_en"]
+
+
+def _user_plan_label(user: dict | None, lang: str = "ru") -> str:
+    limits = PLAN_LIMITS.get(_effective_plan(user), PLAN_LIMITS["free"])
     return limits["name_ru"] if normalize_lang(lang) == "ru" else limits["name_en"]
 
 
@@ -396,19 +704,23 @@ def _normalize_telegram_username(value: str | None) -> str:
 
 def _user_access(user: dict | None) -> dict:
     role = str((user or {}).get("role") or "user")
-    plan = _normalized_plan((user or {}).get("plan"))
+    plan = _effective_plan(user)
+    base_plan = _base_plan((user or {}).get("plan"))
+    referral_verified = _referral_verified(user)
     is_admin = role == "admin"
     limits = _plan_limits(user)
     return {
         "role": role,
         "plan": plan,
+        "base_plan": base_plan,
         "plan_label": limits["name_ru"],
         "plan_limits": limits,
+        "referral_verified": referral_verified,
         "is_admin": is_admin,
-        "is_premium": is_admin or plan == "premium",
-        "is_start": bool(user) and plan == "start",
+        "is_premium": is_admin or plan in {"premium", "premium_plus"},
+        "is_start": bool(user) and plan in {"start", "start_plus"},
         "is_free": bool(user) and plan == "free" and not is_admin,
-        "is_paid": bool(user) and plan in {"start", "premium"},
+        "is_paid": bool(user) and plan in {"start", "start_plus", "premium", "premium_plus"},
         "can_use_market_shock": is_admin,
     }
 
@@ -539,6 +851,8 @@ def _profile_context(user: dict, success: str = "", error: str = "", totp_setup:
     profile_user["timezone"] = _user_timezone_name(user)
     profile_user["created_at_display"] = _format_user_datetime(user.get("created_at"), user)
     profile_user["twofa_enabled"] = _twofa_enabled(user)
+    profile_user["plan_label_ru"] = _user_plan_label(user, "ru")
+    profile_user["plan_label_en"] = _user_plan_label(user, "en")
     return {
         "profile_user": profile_user,
         "success": success,
@@ -546,9 +860,32 @@ def _profile_context(user: dict, success: str = "", error: str = "", totp_setup:
         "totp_setup": totp_setup,
         "telegram_verify_url": telegram_verify_url(int(user["id"])) if profile_user.get("telegram_username") else "",
         "timezone_options": _timezone_options(),
-        "admin_users": _admin_user_views(user),
+    }
+
+
+def _admin_analytics_context(user: dict, success: str = "", error: str = "") -> dict:
+    profile_user = dict(user)
+    profile_user["timezone"] = _user_timezone_name(user)
+    profile_user["created_at_display"] = _format_user_datetime(user.get("created_at"), user)
+    profile_user["twofa_enabled"] = _twofa_enabled(user)
+    profile_user["plan_label_ru"] = _user_plan_label(user, "ru")
+    profile_user["plan_label_en"] = _user_plan_label(user, "en")
+    admin_users = _admin_user_views(user)
+    admin_trade_analysis = _admin_trade_analysis(user)
+    admin_griders_chart_rows = _admin_griders_trade_chart_rows(user)
+    return {
+        "profile_user": profile_user,
+        "success": success,
+        "error": error,
+        "admin_users": admin_users,
+        "admin_users_totals": _admin_user_totals(admin_users),
         "admin_site_stats": _admin_site_stats(user),
-        "admin_trade_analysis": _admin_trade_analysis(user),
+        "admin_trade_analysis": admin_trade_analysis,
+        "admin_trade_analysis_totals": _admin_trade_analysis_totals(admin_trade_analysis),
+        "admin_griders_trades_totals": _admin_griders_trade_totals_from_db(user),
+        "admin_griders_trades_chart_json": _admin_griders_trade_chart_json(admin_griders_chart_rows, user),
+        "tariffs": PLAN_LIMITS,
+        "base_tariff_codes": BASE_PLAN_OPTIONS,
     }
 
 
@@ -672,8 +1009,51 @@ def _admin_trade_analysis(user: dict) -> list[dict]:
             "avg_r_text": f"{row['avg_r_multiple']:.2f}",
             "avg_hold_text": _fmt_duration(row["avg_hold_seconds"]),
             "pnl_class": "positive" if row["total_pnl"] > 0 else ("negative" if row["total_pnl"] < 0 else ""),
+            "side_label": _trade_side_label(row["side"]),
+            "close_reason_label": _trade_close_reason_label(row["close_reason"]),
         })
     return rows
+
+
+def _admin_trade_analysis_totals(rows: list[dict]) -> dict:
+    trades = sum(int(row.get("trades_count") or 0) for row in rows)
+    wins = sum(int(row.get("wins_count") or 0) for row in rows)
+    total_pnl = sum(_float(row.get("total_pnl")) for row in rows)
+    avg_pnl = total_pnl / trades if trades else 0.0
+    avg_roi = (
+        sum(_float(row.get("avg_roi_pct")) * int(row.get("trades_count") or 0) for row in rows) / trades
+        if trades else 0.0
+    )
+    avg_r = (
+        sum(_float(row.get("avg_r_multiple")) * int(row.get("trades_count") or 0) for row in rows) / trades
+        if trades else 0.0
+    )
+    avg_hold = (
+        sum(int(row.get("avg_hold_seconds") or 0) * int(row.get("trades_count") or 0) for row in rows) / trades
+        if trades else 0.0
+    )
+    return {
+        "trades_count": trades,
+        "win_rate_text": _fmt_percent((wins / trades * 100) if trades else 0.0),
+        "total_pnl": total_pnl,
+        "total_pnl_text": _fmt_money(total_pnl),
+        "avg_pnl_text": _fmt_money(avg_pnl),
+        "avg_roi_text": _fmt_percent(avg_roi),
+        "avg_r_text": f"{avg_r:.2f}",
+        "avg_hold_text": _fmt_duration(int(avg_hold)),
+        "pnl_class": "positive" if total_pnl > 0 else ("negative" if total_pnl < 0 else ""),
+    }
+
+
+def _trade_side_label(side: str) -> str:
+    return {"long": "Лонг", "short": "Шорт"}.get(str(side or "").lower(), str(side or "—"))
+
+
+def _trade_close_reason_label(reason: str) -> str:
+    return {
+        "take_profit": "Тейк-профит",
+        "stop_loss": "Стоп-лосс",
+    }.get(str(reason or "").lower(), str(reason or "—"))
 
 
 def _admin_user_views(user: dict) -> list[dict]:
@@ -681,14 +1061,24 @@ def _admin_user_views(user: dict) -> list[dict]:
         return []
     rows = fetch_all(
         """
-        SELECT u.id, u.email, u.nickname, u.telegram_username, u.telegram_user_id, u.role, u.plan, u.created_at,
-               COALESCE(s.cumulative_pnl, 0) AS cumulative_pnl,
-               COALESCE(s.closed_trades_count, 0) AS closed_trades_count,
-               COALESCE(s.closed_entry_volume, 0) AS closed_entry_volume,
+        SELECT u.id, u.email, u.nickname, u.telegram_username, u.telegram_user_id, u.role, u.plan,
+               u.referral_verified, u.created_at,
+               COALESCE(g.cumulative_pnl, 0) AS cumulative_pnl,
+               COALESCE(g.closed_trades_count, 0) AS closed_trades_count,
+               COALESCE(g.closed_entry_volume, 0) AS closed_entry_volume,
                COALESCE(s.connection_status, 'missing') AS connection_status,
                s.pnl_calculated_at, s.status_checked_at
         FROM ai_users u
         LEFT JOIN ai_user_admin_stats s ON s.user_id = u.id
+        LEFT JOIN (
+            SELECT user_id,
+                   COALESCE(SUM(closed_pnl), 0) AS cumulative_pnl,
+                   COUNT(*) AS closed_trades_count,
+                   COALESCE(SUM(api_entry_value), 0) AS closed_entry_volume
+            FROM ai_site_trade_deals
+            WHERE status='closed'
+            GROUP BY user_id
+        ) g ON g.user_id = u.id
         ORDER BY u.created_at ASC, u.id ASC
         """
     )
@@ -696,11 +1086,15 @@ def _admin_user_views(user: dict) -> list[dict]:
     for row in rows:
         status = row.get("connection_status") or "missing"
         pnl = _float(row.get("cumulative_pnl"))
+        row_user = dict(row)
         result.append({
             **row,
             "created_at_display": _format_user_datetime(row.get("created_at"), user),
-            "plan": _normalized_plan(row.get("plan")),
-            "plan_label": _plan_label(row.get("plan"), "ru"),
+            "created_date_display": _local_date_from_utc(row.get("created_at"), user).strftime("%d.%m.%y"),
+            "plan": _base_plan(row.get("plan")),
+            "effective_plan": _effective_plan(row_user),
+            "plan_label": _user_plan_label(row_user, "ru"),
+            "referral_verified": _referral_verified(row_user),
             "role": row.get("role") or "user",
             "connection_status": status,
             "connection_status_class": {
@@ -718,6 +1112,148 @@ def _admin_user_views(user: dict) -> list[dict]:
             "pnl_class": "positive" if pnl > 0 else ("negative" if pnl < 0 else ""),
         })
     return result
+
+
+def _admin_user_totals(rows: list[dict]) -> dict:
+    active_users = sum(1 for row in rows if row.get("connection_status") == "active")
+    total_pnl = sum(_float(row.get("cumulative_pnl_raw")) for row in rows)
+    return {
+        "users_count": len(rows),
+        "active_users_count": active_users,
+        "total_pnl": total_pnl,
+        "total_pnl_text": _fmt_money(total_pnl),
+        "pnl_class": "positive" if total_pnl > 0 else ("negative" if total_pnl < 0 else ""),
+    }
+
+
+def _admin_griders_trade_rows(user: dict) -> list[dict]:
+    if not _user_access(user)["is_admin"]:
+        return []
+    rows = fetch_all(
+        """
+        SELECT d.id, d.closed_at, d.pair, d.side, d.closed_pnl, d.strategy_code,
+               u.email, u.nickname
+        FROM ai_site_trade_deals d
+        JOIN ai_users u ON u.id = d.user_id
+        WHERE d.status='closed' AND d.closed_at IS NOT NULL
+        ORDER BY d.closed_at DESC, d.id DESC
+        """
+    )
+    result = []
+    for row in rows:
+        pnl = _float(row.get("closed_pnl"))
+        closed_at = _as_utc_datetime(row.get("closed_at"))
+        result.append({
+            "id": int(row.get("id") or 0),
+            "closed_at": closed_at,
+            "date_display": _format_user_datetime(closed_at, user),
+            "user_display": row.get("nickname") or row.get("email") or "—",
+            "pair": str(row.get("pair") or "").upper(),
+            "side": str(row.get("side") or "").lower(),
+            "side_label": _trade_side_label(str(row.get("side") or "")),
+            "pnl": pnl,
+            "pnl_text": _fmt_money(pnl),
+            "pnl_class": "positive" if pnl > 0 else ("negative" if pnl < 0 else ""),
+            "strategy": _griders_trade_strategy_label(str(row.get("strategy_code") or "")),
+        })
+    return result
+
+
+def _admin_griders_trade_totals(rows: list[dict]) -> dict:
+    total_pnl = sum(_float(row.get("pnl")) for row in rows)
+    return {
+        "trades_count": len(rows),
+        "total_pnl": total_pnl,
+        "total_pnl_text": _fmt_money(total_pnl),
+        "pnl_class": "positive" if total_pnl > 0 else ("negative" if total_pnl < 0 else ""),
+    }
+
+
+def _admin_griders_trade_totals_from_db(user: dict) -> dict:
+    if not _user_access(user)["is_admin"]:
+        return _admin_griders_trade_totals([])
+    row = fetch_one(
+        """
+        SELECT COUNT(*) AS trades_count, COALESCE(SUM(closed_pnl), 0) AS total_pnl
+        FROM ai_site_trade_deals
+        WHERE status='closed' AND closed_at IS NOT NULL
+        """
+    ) or {}
+    total_pnl = _float(row.get("total_pnl"))
+    return {
+        "trades_count": int(row.get("trades_count") or 0),
+        "total_pnl": total_pnl,
+        "total_pnl_text": _fmt_money(total_pnl),
+        "pnl_class": "positive" if total_pnl > 0 else ("negative" if total_pnl < 0 else ""),
+    }
+
+
+def _admin_griders_trade_chart_rows(user: dict) -> list[dict]:
+    if not _user_access(user)["is_admin"]:
+        return []
+    rows = fetch_all(
+        """
+        SELECT closed_at, closed_pnl AS pnl
+        FROM ai_site_trade_deals
+        WHERE status='closed' AND closed_at IS NOT NULL
+        ORDER BY closed_at ASC, id ASC
+        """
+    )
+    return [
+        {
+            "closed_at": _as_utc_datetime(row.get("closed_at")),
+            "pnl": _float(row.get("pnl")),
+        }
+        for row in rows
+    ]
+
+
+def _admin_griders_trade_chart_json(rows: list[dict], user: dict) -> str:
+    if not rows:
+        return "[]"
+    user_tz = _user_zone(user)
+    sorted_rows = sorted(rows, key=lambda item: item["closed_at"])
+    start = sorted_rows[0]["closed_at"].astimezone(user_tz).date()
+    end = sorted_rows[-1]["closed_at"].astimezone(user_tz).date()
+    days = {}
+    current = start
+    while current <= end:
+        days[current.isoformat()] = {
+            "date": current.isoformat(),
+            "label": current.strftime("%d.%m"),
+            "pnl": 0.0,
+            "trades": 0,
+        }
+        current += timedelta(days=1)
+    for row in sorted_rows:
+        key = row["closed_at"].astimezone(user_tz).date().isoformat()
+        if key not in days:
+            continue
+        days[key]["pnl"] += _float(row.get("pnl"))
+        days[key]["trades"] += 1
+    cumulative = 0.0
+    chart = []
+    for item in days.values():
+        cumulative += item["pnl"]
+        chart.append({
+            "date": item["date"],
+            "label": item["label"],
+            "pnl": round(float(item["pnl"]), 6),
+            "pnlText": _fmt_money(item["pnl"]) + " USDT",
+            "cumulative": round(float(cumulative), 6),
+            "cumulativeText": _fmt_money(cumulative) + " USDT",
+            "trades": int(item["trades"]),
+        })
+    return json.dumps(chart, ensure_ascii=False)
+
+
+def _griders_trade_strategy_label(strategy_code: str) -> str:
+    code = strategy_code.lower()
+    if code == "grid_dca_v2":
+        return "GRID DCA 2.8"
+    if code == "grid_dca_v3":
+        return "GRID DCA 3.1"
+    return strategy_code or "—"
 
 
 async def _refresh_admin_user_stats(
@@ -740,7 +1276,8 @@ async def _refresh_admin_user_stats(
     """
     rows = fetch_all(
         f"""
-        SELECT u.id, u.created_at, s.pnl_calculated_at, s.status_checked_at
+        SELECT u.id, u.created_at, u.role, u.plan, COALESCE(u.referral_verified, 0) AS referral_verified,
+               s.pnl_calculated_at, s.status_checked_at
         FROM ai_users u
         LEFT JOIN ai_user_admin_stats s ON s.user_id = u.id
         {where_clause}
@@ -825,13 +1362,21 @@ async def _refresh_one_admin_user_stats(user_row: dict, include_pnl_history: boo
         SELECT c.id, c.bybit_api_key, c.bybit_api_secret_encrypted, c.webhook_url_encrypted,
                c.last_admin_closed_sync_at,
                COALESCE(s.enabled, 0) AS strategy_enabled,
-               COALESCE(s.auto_trade, 0) AS auto_trade
+               COALESCE(s.auto_trade, 0) AS auto_trade,
+               COALESCE(s.risk_pct, %s) AS risk_pct,
+               COALESCE(s.min_order_volume, %s) AS min_order_volume,
+               COALESCE(s.first_order_mode, 'manual') AS first_order_mode,
+               COALESCE(s.leverage, 10) AS leverage,
+               COALESCE(s.max_active_deals, 0) AS max_active_deals,
+               COALESCE(s.max_long_deals, 0) AS max_long_deals,
+               COALESCE(s.max_short_deals, 0) AS max_short_deals,
+               COALESCE(s.watchlist, '') AS watchlist
         FROM ai_user_connections c
         LEFT JOIN ai_user_strategy_settings s ON s.connection_id = c.id
         WHERE c.user_id=%s AND c.is_active=1
         ORDER BY c.id
         """,
-        (user_id,),
+        (settings.DEFAULT_RISK_PCT, settings.DEFAULT_MIN_ORDER_VOLUME, user_id),
     )
     cumulative_pnl = _float(existing_stats.get("cumulative_pnl"))
     closed_trades_count = int(existing_stats.get("closed_trades_count") or 0)
@@ -863,7 +1408,10 @@ async def _refresh_one_admin_user_stats(user_row: dict, include_pnl_history: boo
             continue
 
         has_working_connection = True
-        if balance > 0 and int(conn.get("strategy_enabled") or 0) == 1 and int(conn.get("auto_trade") or 0) == 1:
+        conn_with_balance = {**conn, "last_balance": balance}
+        margin_status = _strategy_minimum_margin_status(user_row, conn_with_balance, conn)
+        strategy_is_running = int(conn.get("strategy_enabled") or 0) == 1 and int(conn.get("auto_trade") or 0) == 1
+        if strategy_is_running and margin_status["can_open"]:
             has_active_autotrade = True
 
         if include_pnl_history:
@@ -1094,14 +1642,26 @@ async def tradingview_grid_dca(secret: str, request: Request):
         return Response(status_code=404)
     payload = await request.json()
     if tradingview_grid_queue is None:
-        asyncio.create_task(handle_tradingview_grid_dca(payload))
-        return {"ok": True, "queued": True, "fallback": "task"}
-    try:
-        tradingview_grid_queue.put_nowait(payload)
-    except asyncio.QueueFull:
-        logger.warning("TradingView GRID DCA queue is full")
+        logger.error("TradingView GRID DCA queue is not initialized")
         return Response(status_code=503)
-    return {"ok": True, "queued": True}
+    result = enqueue_tradingview_grid_dca(payload)
+    event_id = result.get("event_id")
+    queued_in_memory = False
+    try:
+        if event_id and result.get("queued"):
+            tradingview_grid_queue.put_nowait(int(event_id))
+            queued_in_memory = True
+    except asyncio.QueueFull:
+        logger.warning("TradingView GRID DCA in-memory queue is full; persisted event %s will be picked up by polling", event_id)
+    return {
+        "ok": True,
+        "queued": bool(result.get("queued")),
+        "persisted": bool(event_id),
+        "memory_queued": queued_in_memory,
+        "queue_size": tradingview_grid_queue.qsize(),
+        "queue_maxsize": TRADINGVIEW_QUEUE_MAXSIZE,
+        "reason": result.get("reason"),
+    }
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -1269,11 +1829,16 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         return response
     response = RedirectResponse("/dashboard", status_code=303)
     response.set_cookie(settings.SESSION_COOKIE, make_session(int(user["id"])), max_age=settings.SESSION_IDLE_TIMEOUT_SECONDS, httponly=True, samesite="lax")
+    response.delete_cookie(ADMIN_VIEW_USER_COOKIE)
     return response
 
 
 @app.get("/login/2fa", response_class=HTMLResponse)
 async def login_2fa_page(request: Request):
+    if current_user(request):
+        response = RedirectResponse("/dashboard", status_code=303)
+        response.delete_cookie(TWOFA_PENDING_COOKIE)
+        return response
     uid = parse_pending_2fa(request.cookies.get(TWOFA_PENDING_COOKIE))
     if not uid:
         return RedirectResponse("/login", status_code=303)
@@ -1285,6 +1850,10 @@ async def login_2fa_page(request: Request):
 
 @app.post("/login/2fa")
 async def login_2fa(request: Request, code: str = Form(...)):
+    if current_user(request):
+        response = RedirectResponse("/dashboard", status_code=303)
+        response.delete_cookie(TWOFA_PENDING_COOKIE)
+        return response
     uid = parse_pending_2fa(request.cookies.get(TWOFA_PENDING_COOKIE))
     if not uid:
         return RedirectResponse("/login", status_code=303)
@@ -1297,6 +1866,7 @@ async def login_2fa(request: Request, code: str = Form(...)):
     response = RedirectResponse("/dashboard", status_code=303)
     response.set_cookie(settings.SESSION_COOKIE, make_session(int(user["id"])), max_age=settings.SESSION_IDLE_TIMEOUT_SECONDS, httponly=True, samesite="lax")
     response.delete_cookie(TWOFA_PENDING_COOKIE)
+    response.delete_cookie(ADMIN_VIEW_USER_COOKIE)
     return response
 
 
@@ -1305,6 +1875,8 @@ async def logout():
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(settings.SESSION_COOKIE)
     response.delete_cookie(TWOFA_PENDING_COOKIE)
+    response.delete_cookie(ADMIN_VIEW_USER_COOKIE)
+    response.delete_cookie(SELECTED_CONNECTION_COOKIE)
     return response
 
 
@@ -1384,6 +1956,56 @@ async def profile_page(request: Request):
         return user
     success = request.query_params.get("success") or ""
     return render(request, "profile.html", _profile_context(user, success=success))
+
+
+@app.get("/admin/analytics", response_class=HTMLResponse)
+async def admin_analytics_page(request: Request):
+    user = _session_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not _user_access(user)["is_admin"]:
+        return RedirectResponse("/dashboard", status_code=303)
+    success = request.query_params.get("success") or ""
+    return render(request, "admin_analytics.html", _admin_analytics_context(user, success=success))
+
+
+@app.get("/admin/users/{target_user_id}/view")
+async def admin_view_user_profile(request: Request, target_user_id: int):
+    viewer = _session_user(request)
+    if not viewer:
+        return RedirectResponse("/login", status_code=303)
+    if not _user_access(viewer)["is_admin"]:
+        return RedirectResponse("/dashboard", status_code=303)
+    target = fetch_one("SELECT id FROM ai_users WHERE id=%s", (int(target_user_id),))
+    if not target:
+        return RedirectResponse("/admin/analytics", status_code=303)
+    response = RedirectResponse("/dashboard", status_code=303)
+    if int(target["id"]) == int(viewer["id"]):
+        response.delete_cookie(ADMIN_VIEW_USER_COOKIE)
+        return response
+    response.set_cookie(
+        ADMIN_VIEW_USER_COOKIE,
+        str(int(target["id"])),
+        max_age=settings.SESSION_IDLE_TIMEOUT_SECONDS,
+        httponly=True,
+        samesite="lax",
+    )
+    response.delete_cookie(SELECTED_CONNECTION_COOKIE)
+    return response
+
+
+@app.post("/admin/view/exit")
+async def admin_view_exit(request: Request):
+    viewer = _session_user(request)
+    if not viewer:
+        response = RedirectResponse("/login", status_code=303)
+    elif not _user_access(viewer)["is_admin"]:
+        response = RedirectResponse("/dashboard", status_code=303)
+    else:
+        response = RedirectResponse("/profile", status_code=303)
+    response.delete_cookie(ADMIN_VIEW_USER_COOKIE)
+    response.delete_cookie(SELECTED_CONNECTION_COOKIE)
+    return response
 
 
 @app.post("/profile")
@@ -1467,13 +2089,17 @@ async def admin_update_user_plans(request: Request):
     for row in rows:
         user_id = int(row["id"])
         if row.get("role") == "admin":
-            execute("UPDATE ai_users SET plan='premium' WHERE id=%s", (user_id,))
+            execute("UPDATE ai_users SET plan='premium', referral_verified=1 WHERE id=%s", (user_id,))
             continue
         values = form.getlist(f"plan_{user_id}")
-        submitted = next((value for value in values if value in PLAN_LIMITS), "free")
-        plan = _normalized_plan(submitted)
-        execute("UPDATE ai_users SET plan=%s WHERE id=%s", (plan, user_id))
-    return RedirectResponse("/profile?success=plans", status_code=303)
+        submitted = next((value for value in values if value in BASE_PLAN_OPTIONS), "free")
+        plan = _base_plan(submitted)
+        referral_verified = 1 if form.get(f"referral_{user_id}") == "1" else 0
+        execute(
+            "UPDATE ai_users SET plan=%s, referral_verified=%s WHERE id=%s",
+            (plan, referral_verified, user_id),
+        )
+    return RedirectResponse("/admin/analytics?success=plans", status_code=303)
 
 
 @app.post("/profile/admin/users/delete")
@@ -1485,14 +2111,14 @@ async def admin_delete_user(request: Request, delete_user_id: int = Form(...)):
         return RedirectResponse("/profile", status_code=303)
     target_id = int(delete_user_id)
     if target_id == int(user["id"]):
-        return render(request, "profile.html", _profile_context(user, error="Нельзя удалить текущий админский аккаунт."), 422)
+        return render(request, "admin_analytics.html", _admin_analytics_context(user, error="Нельзя удалить текущий админский аккаунт."), 422)
     target = fetch_one("SELECT id, role FROM ai_users WHERE id=%s", (target_id,))
     if not target:
-        return RedirectResponse("/profile", status_code=303)
+        return RedirectResponse("/admin/analytics", status_code=303)
     if target.get("role") == "admin":
-        return render(request, "profile.html", _profile_context(user, error="Админские аккаунты нельзя удалять из этой таблицы."), 422)
+        return render(request, "admin_analytics.html", _admin_analytics_context(user, error="Админские аккаунты нельзя удалять из этой таблицы."), 422)
     execute("DELETE FROM ai_users WHERE id=%s", (target_id,))
-    return RedirectResponse("/profile?success=user_deleted", status_code=303)
+    return RedirectResponse("/admin/analytics?success=user_deleted", status_code=303)
 
 
 @app.post("/profile/admin/users/refresh")
@@ -1503,8 +2129,19 @@ async def admin_refresh_user_stats(request: Request):
     if not _user_access(user)["is_admin"]:
         return RedirectResponse("/profile", status_code=303)
     if _start_admin_stats_refresh(force=True):
-        return RedirectResponse("/profile?success=stats_queued", status_code=303)
-    return RedirectResponse("/profile?success=stats_running", status_code=303)
+        return RedirectResponse("/admin/analytics?success=stats_queued", status_code=303)
+    return RedirectResponse("/admin/analytics?success=stats_running", status_code=303)
+
+
+@app.post("/admin/analytics/griders-trades/refresh")
+async def admin_refresh_griders_trades(request: Request):
+    user = require_user(request)
+    if isinstance(user, RedirectResponse):
+        return user
+    if not _user_access(user)["is_admin"]:
+        return RedirectResponse("/profile", status_code=303)
+    asyncio.create_task(_sync_open_griders_deals_once(limit_connections=100))
+    return RedirectResponse("/admin/analytics?success=griders_sync_queued", status_code=303)
 
 
 @app.post("/profile/password-reset")
@@ -1653,11 +2290,12 @@ async def dashboard(request: Request):
     strategy = _strategy(uid, int(connection["id"])) if connection else _strategy(uid)
     risk_pauses = await _risk_pause_views(uid, connection)
     risk_pause = risk_pauses[0] if risk_pauses else None
+    unprotected_positions = await _dashboard_unprotected_position_alerts(connections)
     override_success = request.query_params.get("override") == "1"
     ai_signals = []
     if connection:
         ai_signals = fetch_all(
-            "SELECT * FROM ai_signals WHERE user_id=%s AND connection_id <=> %s ORDER BY created_at DESC, id DESC LIMIT 20",
+            "SELECT * FROM ai_signals WHERE user_id=%s AND connection_id <=> %s ORDER BY created_at DESC, id DESC LIMIT 100",
             (uid, int(connection["id"])),
         )
     _prune_user_signals(uid)
@@ -1670,6 +2308,7 @@ async def dashboard(request: Request):
         "strategy_meta": _strategy_meta_view(strategy["strategy_code"], _lang(request)),
         "risk_pause": risk_pause,
         "risk_pauses": risk_pauses,
+        "unprotected_positions": unprotected_positions,
         "override_success": override_success,
         "signals": [_signal_view(row, _lang(request), user) for row in ai_signals],
     })
@@ -1687,16 +2326,27 @@ async def connections_page(request: Request):
         success = _t(request, "connections", "api_valid")
     if request.query_params.get("saved") == "1":
         success = _t(request, "common", "saved")
+    if request.query_params.get("deleted") == "1":
+        success = "Подключение удалено." if _lang(request) == "ru" else "Connection deleted."
     error = None
     if request.query_params.get("plan_error") == "market":
         error = _plan_message(_lang(request), "market")
     if request.query_params.get("limit_error") == "connection":
         error = "Для вашего тарифа доступно только одно подключение." if _lang(request) == "ru" else "Your plan allows only one connection."
+    if request.query_params.get("locked") == "referral":
+        error = "Подключен Плюс Тариф. Смена подключения только по запросу." if _lang(request) == "ru" else "Plus plan is connected. Connection changes are available by request only."
+    if request.query_params.get("delete_error") == "missing":
+        error = "Подключение не найдено." if _lang(request) == "ru" else "Connection not found."
+    if request.query_params.get("delete_error") == "2fa_required":
+        error = "Для удаления подключения сначала включите 2FA в профиле." if _lang(request) == "ru" else "Enable 2FA in your profile before deleting a connection."
+    if request.query_params.get("delete_error") == "bad_2fa":
+        error = "Неверный код 2FA. Подключение не удалено." if _lang(request) == "ru" else "Invalid 2FA code. Connection was not deleted."
     connection_id = int(request.query_params.get("connection_id") or 0)
     creating_new = request.query_params.get("new") == "1"
     uid = int(user["id"])
     connections = _connections(uid)
-    can_create_connection = _can_create_connection(user, connections)
+    connection_locked = _referral_verified(user) and not _user_access(user)["is_admin"]
+    can_create_connection = False if connection_locked else _can_create_connection(user, connections)
     if creating_new and not can_create_connection:
         creating_new = False
     selected = None if creating_new else (_connection(uid, connection_id) if connection_id else _connection(uid, _selected_connection_id(request, connections)))
@@ -1708,6 +2358,7 @@ async def connections_page(request: Request):
             "connections": [_connection_view(item) for item in connections],
             "creating_new": creating_new or not selected,
             "can_create_connection": can_create_connection,
+            "connection_locked": connection_locked,
             "strategies": _available_strategies(user),
             "success": success,
             "error": error,
@@ -1731,6 +2382,8 @@ async def save_connections(
     user = require_user(request)
     if isinstance(user, RedirectResponse):
         return user
+    if _referral_verified(user) and not _user_access(user)["is_admin"]:
+        return RedirectResponse("/connections?locked=referral", status_code=303)
     uid = int(user["id"])
     current = _connection(uid, connection_id) if connection_id else None
     if not current and not _can_create_connection(user):
@@ -1742,6 +2395,34 @@ async def save_connections(
     new_api_key = bybit_api_key.strip()
     previous_api_key = ((current or {}).get("bybit_api_key") or "").strip()
     secret_value = bybit_api_secret.strip()
+    duplicate_connection = None
+    if new_api_key:
+        duplicate_connection = fetch_one(
+            """
+            SELECT c.id, c.user_id
+            FROM ai_user_connections c
+            WHERE c.bybit_api_key=%s
+              AND c.is_active=1
+              AND c.user_id<>%s
+            LIMIT 1
+            """,
+            (new_api_key, uid),
+        )
+    if duplicate_connection:
+        return render(
+            request,
+            "connections.html",
+            {
+                "connection": _connection_view(current),
+                "connections": [_connection_view(item) for item in _connections(uid)],
+                "creating_new": not bool(current),
+                "can_create_connection": _can_create_connection(user),
+                "connection_locked": False,
+                "strategies": _available_strategies(user),
+                "error": _t(request, "connections", "api_key_in_use"),
+            },
+            422,
+        )
     if current and new_api_key != previous_api_key and not secret_value:
         return render(
             request,
@@ -1751,6 +2432,7 @@ async def save_connections(
                 "connections": [_connection_view(item) for item in _connections(uid)],
                 "creating_new": False,
                 "can_create_connection": _can_create_connection(user),
+                "connection_locked": False,
                 "strategies": _available_strategies(user),
                 "error": _t(request, "connections", "secret_required"),
             },
@@ -1784,6 +2466,35 @@ async def save_connections(
     )
     response = RedirectResponse(f"/connections?connection_id={saved_connection_id}&saved=1", status_code=303)
     _remember_connection(response, saved_connection_id)
+    return response
+
+
+@app.post("/connections/delete")
+async def delete_connection(
+    request: Request,
+    connection_id: int = Form(...),
+    twofa_code: str = Form(""),
+):
+    user = require_user(request)
+    if isinstance(user, RedirectResponse):
+        return user
+    if _referral_verified(user) and not _user_access(user)["is_admin"]:
+        return RedirectResponse("/connections?locked=referral", status_code=303)
+    uid = int(user["id"])
+    conn = _connection(uid, connection_id)
+    if not conn:
+        return RedirectResponse("/connections?delete_error=missing", status_code=303)
+    target = f"/connections?connection_id={int(conn['id'])}"
+    if not _twofa_enabled(user):
+        return RedirectResponse(f"{target}&delete_error=2fa_required", status_code=303)
+    if not _verify_user_2fa(user, twofa_code):
+        return RedirectResponse(f"{target}&delete_error=bad_2fa", status_code=303)
+    execute(
+        "UPDATE ai_user_connections SET is_active=0 WHERE id=%s AND user_id=%s",
+        (int(conn["id"]), uid),
+    )
+    response = RedirectResponse("/connections?deleted=1", status_code=303)
+    response.delete_cookie(SELECTED_CONNECTION_COOKIE)
     return response
 
 
@@ -1915,25 +2626,42 @@ async def save_strategy(
     if first_order_mode == "deposit_pct":
         balance = float(connection.get("last_balance") or 0)
         if balance <= 0:
-            response = RedirectResponse(f"/strategies?connection_id={int(connection['id'])}&order_error=no_balance", status_code=303)
-            _remember_connection(response, int(connection["id"]))
-            return response
-        factor = _typical_safety_factor(settings.TYPICAL_SAFETY_ORDERS, settings.TYPICAL_MARTINGALE_MULTIPLIER)
-        calculated_first_order = round((balance * (risk_pct / 100.0) * leverage) / factor, 2)
-        if calculated_first_order < settings.MIN_FIRST_ORDER_VOLUME:
-            response = RedirectResponse(
-                f"/strategies?connection_id={int(connection['id'])}&order_error=min_first_order&calculated={_fmt_fixed(calculated_first_order)}",
-                status_code=303,
-            )
-            _remember_connection(response, int(connection["id"]))
-            return response
-        first_order_volume = min(calculated_first_order, float(limits["max_first_order"]))
+            if _is_free_plus_plan(user):
+                first_order_volume = settings.MIN_FIRST_ORDER_VOLUME
+                first_order_mode = "manual"
+            else:
+                response = RedirectResponse(f"/strategies?connection_id={int(connection['id'])}&order_error=no_balance", status_code=303)
+                _remember_connection(response, int(connection["id"]))
+                return response
+        if first_order_mode == "deposit_pct":
+            factor = _typical_safety_factor(settings.TYPICAL_SAFETY_ORDERS, settings.TYPICAL_MARTINGALE_MULTIPLIER)
+            calculated_first_order = round((balance * (risk_pct / 100.0) * leverage) / factor, 2)
+            if _is_free_plus_plan(user):
+                free_plus_cap = _free_plus_first_order_cap(user, connection)
+                if calculated_first_order < settings.MIN_FIRST_ORDER_VOLUME:
+                    first_order_volume = settings.MIN_FIRST_ORDER_VOLUME
+                    first_order_mode = "manual"
+                else:
+                    first_order_volume = min(calculated_first_order, free_plus_cap)
+            else:
+                if calculated_first_order < settings.MIN_FIRST_ORDER_VOLUME:
+                    response = RedirectResponse(
+                        f"/strategies?connection_id={int(connection['id'])}&order_error=min_first_order&calculated={_fmt_fixed(calculated_first_order)}",
+                        status_code=303,
+                    )
+                    _remember_connection(response, int(connection["id"]))
+                    return response
+                first_order_volume = min(calculated_first_order, float(limits["max_first_order"]))
     else:
         first_order_volume = max(float(min_order_volume), settings.MIN_FIRST_ORDER_VOLUME)
         if not access["is_admin"]:
             first_order_volume = min(first_order_volume, float(limits["max_first_order"]))
         if limits["code"] != "free" and not access["is_admin"]:
-            manual_cap = _manual_first_order_cap(user, connection)
+            manual_cap = _free_plus_first_order_cap(user, connection) if _is_free_plus_plan(user) else _manual_first_order_cap(user, connection)
+            if _is_free_plus_plan(user) and manual_cap < settings.MIN_FIRST_ORDER_VOLUME:
+                first_order_volume = settings.MIN_FIRST_ORDER_VOLUME
+                first_order_mode = "manual"
+                manual_cap = settings.MIN_FIRST_ORDER_VOLUME
             if first_order_volume > manual_cap:
                 response = RedirectResponse(
                     f"/strategies?connection_id={int(connection['id'])}&order_error=manual_first_order_max&max_manual={_fmt_fixed(manual_cap)}",
@@ -2008,7 +2736,7 @@ async def ai_signals_page(request: Request):
             SELECT * FROM ai_signals
             WHERE user_id=%s AND connection_id <=> %s AND strategy_code=%s
             ORDER BY created_at DESC, id DESC
-            LIMIT 50
+            LIMIT 100
             """,
             (uid, selected_id, selected_connection.get("strategy_code") or settings.DEFAULT_STRATEGY_CODE),
         )
@@ -2185,12 +2913,13 @@ async def monitoring_page(request: Request):
     connections = _connections(uid)
     selected_id = _selected_connection_id(request, connections)
     selected_connection = _connection(uid, selected_id) if selected_id else None
-    start_date, end_date = _monitoring_dates(request, user)
+    start_date, end_date = _monitoring_dates(request, user, selected_connection)
     error = None
     monitor = None
     if selected_connection:
         try:
-            monitor = await _monitoring_snapshot(selected_connection, start_date, end_date, user)
+            force_refresh = request.query_params.get("refresh") == "1"
+            monitor = await _monitoring_snapshot(selected_connection, start_date, end_date, user, force_refresh=force_refresh)
         except Exception as exc:
             error = str(exc)
             execute(
@@ -2282,6 +3011,83 @@ def _selected_connection_id(request: Request, connections: list[dict]) -> int:
 def _remember_connection(response: Response, connection_id: int | None) -> None:
     if connection_id:
         response.set_cookie(SELECTED_CONNECTION_COOKIE, str(int(connection_id)), max_age=settings.SESSION_MAX_AGE, httponly=False, samesite="lax")
+
+
+async def _dashboard_unprotected_position_alerts(connections: list[dict]) -> list[dict]:
+    alerts: list[dict] = []
+    for conn in connections:
+        api_key = conn.get("bybit_api_key") or ""
+        api_secret_encrypted = conn.get("bybit_api_secret_encrypted")
+        if not api_key or not api_secret_encrypted:
+            continue
+        try:
+            api_secret = decrypt_secret(api_secret_encrypted)
+        except Exception:
+            continue
+        if not api_secret:
+            continue
+        try:
+            rows = await asyncio.wait_for(positions(api_key, api_secret), timeout=12)
+        except Exception:
+            continue
+        for position in rows:
+            if not _dashboard_position_is_open(position):
+                continue
+            pair = str(position.get("symbol") or "").upper()
+            if not pair:
+                continue
+            side = _dashboard_position_side(position)
+            has_take_profit = bool(str(position.get("takeProfit") or "").strip())
+            try:
+                orders = await asyncio.wait_for(open_orders(api_key, api_secret, pair), timeout=12)
+            except Exception:
+                orders = []
+            has_close_order = _dashboard_has_close_order(orders, side)
+            if has_take_profit or has_close_order:
+                continue
+            alerts.append({
+                "connection_id": int(conn.get("id") or 0),
+                "connection_label": conn.get("label") or f"Подключение {conn.get('id')}",
+                "pair": pair,
+                "side": side,
+                "side_label": "лонг" if side == "long" else "шорт" if side == "short" else side,
+                "size": _fmt_number(_float(position.get("size"))),
+                "avg_price": _fmt_number(_float(position.get("avgPrice"))),
+                "mark_price": _fmt_number(_float(position.get("markPrice"))),
+                "unrealised_pnl": _fmt_money(_float(position.get("unrealisedPnl"))),
+            })
+    return alerts
+
+
+def _dashboard_position_is_open(position: dict) -> bool:
+    return abs(_float(position.get("size"))) > 0
+
+
+def _dashboard_position_side(position: dict) -> str:
+    side = str(position.get("side") or "").lower()
+    if side == "buy":
+        return "long"
+    if side == "sell":
+        return "short"
+    return side
+
+
+def _dashboard_order_is_active(order: dict) -> bool:
+    status = str(order.get("orderStatus") or "").lower()
+    return not status or status in {"new", "partiallyfilled", "untriggered", "triggered"}
+
+
+def _dashboard_has_close_order(orders: list[dict], position_side: str) -> bool:
+    close_side = "sell" if position_side == "long" else "buy"
+    for order in orders:
+        if not _dashboard_order_is_active(order):
+            continue
+        side = str(order.get("side") or "").lower()
+        reduce_only = str(order.get("reduceOnly") or "").lower() == "true"
+        close_on_trigger = str(order.get("closeOnTrigger") or "").lower() == "true"
+        if side == close_side and (reduce_only or close_on_trigger):
+            return True
+    return False
 
 
 def _strategy(user_id: int, connection_id: int | None = None) -> dict:
@@ -2417,14 +3223,36 @@ async def _confirm_position_opened(conn: dict, pair: str, side: str) -> bool:
     return False
 
 
-def _monitoring_dates(request: Request, user: dict | None = None) -> tuple[str, str]:
+def _monitoring_dates(request: Request, user: dict | None = None, conn: dict | None = None) -> tuple[str, str]:
     today = datetime.now(_user_zone(user)).date()
-    default_start = _user_registered_date(user) or today
+    registered = _user_registered_date(user) or today
+    first_trade_start = _monitoring_first_trade_start(user, conn)
+    default_start = first_trade_start or max(registered, MONITORING_DATA_START_DATE)
     start = _parse_date(request.query_params.get("start_date"), default_start)
     end = _parse_date(request.query_params.get("end_date"), today)
     if start > end:
         start, end = end, start
     return start.isoformat(), end.isoformat()
+
+
+def _monitoring_first_trade_start(user: dict | None, conn: dict | None) -> object | None:
+    if not user or not conn:
+        return None
+    row = fetch_one(
+        """
+        SELECT MIN(closed_at) AS first_closed_at
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND status='closed'
+          AND closed_at IS NOT NULL
+        """,
+        (int(user["id"]), int(conn["id"])),
+    )
+    if not row or not row.get("first_closed_at"):
+        return None
+    first_date = _as_utc_datetime(row.get("first_closed_at")).astimezone(_user_zone(user)).date()
+    return max(MONITORING_DATA_START_DATE, first_date - timedelta(days=1))
 
 
 def _user_registered_date(user: dict | None) -> object | None:
@@ -2442,7 +3270,7 @@ def _parse_date(value: str | None, fallback) -> object:
         return fallback
 
 
-async def _monitoring_snapshot(conn: dict, start_date: str, end_date: str, user: dict | None) -> dict:
+async def _monitoring_snapshot(conn: dict, start_date: str, end_date: str, user: dict | None, force_refresh: bool = False) -> dict:
     api_key = conn.get("bybit_api_key") or ""
     api_secret = decrypt_secret(conn.get("bybit_api_secret_encrypted"))
     if not api_key or not api_secret:
@@ -2456,31 +3284,38 @@ async def _monitoring_snapshot(conn: dict, start_date: str, end_date: str, user:
         .astimezone(timezone.utc)
         - timedelta(milliseconds=1)
     )
-    start_ms = int(start_dt.timestamp() * 1000)
-    end_ms = int(end_dt.timestamp() * 1000)
-
-    wallet, position_rows, closed_rows = await asyncio.gather(
-        wallet_balance(api_key, api_secret),
-        positions(api_key, api_secret),
-        _closed_pnl_period(api_key, api_secret, start_ms, end_ms),
-    )
-    balance = extract_usdt_balance(wallet)
+    account_cache = None if force_refresh else _monitoring_account_cache(conn)
+    if account_cache is None:
+        wallet, position_rows = await asyncio.wait_for(
+            asyncio.gather(
+                wallet_balance(api_key, api_secret),
+                positions(api_key, api_secret),
+            ),
+            timeout=15,
+        )
+        balance = extract_usdt_balance(wallet)
+        _store_connection_account_cache(int(conn["id"]), balance, position_rows)
+    else:
+        balance = float(account_cache["balance"])
+        position_rows = list(account_cache["positions"])
+    asyncio.create_task(_sync_recent_griders_closed_deals_for_monitoring(
+        int(conn["user_id"]),
+        int(conn["id"]),
+        api_key,
+        api_secret,
+        end_dt,
+    ))
     active_positions = [_position_monitor_view(row) for row in position_rows if abs(_float(row.get("size"))) > 0]
-    closed = [_closed_pnl_view(row, user) for row in closed_rows]
-    closed.sort(key=lambda item: item["time_ms"], reverse=True)
-    daily = _daily_pnl(closed, start_date, end_date, user)
-    total_pnl = sum(item["pnl"] for item in closed)
-    total_trades = len(closed)
-    wins = sum(1 for item in closed if item["pnl"] > 0)
+    closed = _griders_closed_pnl_views(int(conn["user_id"]), int(conn["id"]), start_dt, end_dt, user, limit=100)
+    daily, summary = _griders_daily_summary_pnl(int(conn["user_id"]), int(conn["id"]), start_dt, end_dt, start_date, end_date, user)
+    total_pnl = summary["total_pnl"]
+    total_trades = summary["total_trades"]
+    wins = summary["wins"]
     start_balance = balance - total_pnl
     if start_balance <= 0:
         start_balance = balance
     period_return = (total_pnl / start_balance * 100) if start_balance > 0 else 0.0
     days = max(1, (datetime.strptime(end_date, "%Y-%m-%d").date() - datetime.strptime(start_date, "%Y-%m-%d").date()).days + 1)
-    execute(
-        "UPDATE ai_user_connections SET last_balance=%s, last_error=NULL, last_checked_at=NOW() WHERE id=%s",
-        (balance, int(conn["id"])),
-    )
     return {
         "balance": _fmt_money(balance),
         "positions": active_positions,
@@ -2531,6 +3366,25 @@ async def _closed_pnl_period(api_key: str, api_secret: str, start_ms: int, end_m
     return rows
 
 
+def _monitoring_account_cache(conn: dict) -> dict | None:
+    checked_at = conn.get("last_positions_checked_at") or conn.get("last_checked_at")
+    if not checked_at:
+        return None
+    checked_dt = _as_utc_datetime(checked_at)
+    if datetime.now(timezone.utc) - checked_dt > timedelta(seconds=MONITORING_ACCOUNT_CACHE_SECONDS):
+        return None
+    try:
+        positions_snapshot = json.loads(conn.get("last_positions_snapshot") or "[]")
+    except Exception:
+        positions_snapshot = []
+    if not isinstance(positions_snapshot, list):
+        positions_snapshot = []
+    return {
+        "balance": _float(conn.get("last_balance")),
+        "positions": positions_snapshot,
+    }
+
+
 def _position_monitor_view(row: dict) -> dict:
     size = abs(_float(row.get("size")))
     side_raw = str(row.get("side") or "").lower()
@@ -2555,6 +3409,180 @@ def _position_monitor_view(row: dict) -> dict:
     }
 
 
+async def _sync_recent_griders_closed_deals_for_monitoring(
+    user_id: int,
+    connection_id: int,
+    api_key: str,
+    api_secret: str,
+    end_dt: datetime,
+) -> None:
+    default_start = end_dt - timedelta(days=3)
+    oldest_open = _oldest_open_griders_deal_sent_at(user_id, connection_id)
+    start_dt = min(default_start, oldest_open) if oldest_open else default_start
+    start_dt = max(start_dt, end_dt - timedelta(days=14))
+    try:
+        closed_rows = await asyncio.wait_for(
+            _closed_pnl_period(
+                api_key,
+                api_secret,
+                int(start_dt.timestamp() * 1000),
+                int(end_dt.timestamp() * 1000),
+            ),
+            timeout=18,
+        )
+        process_closed_rows_for_counter(user_id, connection_id, closed_rows)
+    except Exception as exc:
+        logger.warning("monitoring recent Griders closed-deal sync failed for user %s connection %s: %s", user_id, connection_id, exc)
+
+
+async def _griders_open_deal_sync_loop() -> None:
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await _sync_open_griders_deals_once()
+        except Exception:
+            logger.exception("Griders open-deal sync loop failed")
+        await asyncio.sleep(max(60, GRIDERS_OPEN_DEAL_SYNC_SECONDS))
+
+
+async def _sync_open_griders_deals_once(limit_connections: int = 30) -> int:
+    rows = fetch_all(
+        """
+        SELECT
+            c.id AS connection_id,
+            c.user_id,
+            c.bybit_api_key,
+            c.bybit_api_secret_encrypted,
+            MIN(d.sent_at) AS oldest_sent_at,
+            COUNT(*) AS open_deals
+        FROM ai_site_trade_deals d
+        JOIN ai_user_connections c ON c.id=d.connection_id AND c.is_active=1
+        WHERE d.status='open'
+          AND d.sent_at <= UTC_TIMESTAMP() - INTERVAL 2 MINUTE
+          AND c.bybit_api_key <> ''
+          AND c.bybit_api_secret_encrypted IS NOT NULL
+          AND c.bybit_api_secret_encrypted <> ''
+        GROUP BY c.id, c.user_id, c.bybit_api_key, c.bybit_api_secret_encrypted
+        ORDER BY oldest_sent_at ASC
+        LIMIT %s
+        """,
+        (max(1, int(limit_connections)),),
+    )
+    synced = 0
+    end_dt = datetime.now(timezone.utc)
+    for row in rows:
+        connection_id = int(row["connection_id"])
+        user_id = int(row["user_id"])
+        api_key = row.get("bybit_api_key") or ""
+        try:
+            api_secret = decrypt_secret(row.get("bybit_api_secret_encrypted"))
+        except Exception as exc:
+            logger.warning("Griders open-deal sync secret decrypt failed for connection %s: %s", connection_id, exc)
+            continue
+        if not api_key or not api_secret:
+            continue
+        oldest_sent = _as_utc_datetime(row.get("oldest_sent_at")) or (end_dt - timedelta(days=3))
+        start_dt = max(oldest_sent - timedelta(minutes=30), end_dt - timedelta(days=30))
+        try:
+            closed_rows = await asyncio.wait_for(
+                _closed_pnl_period(
+                    api_key,
+                    api_secret,
+                    int(start_dt.timestamp() * 1000),
+                    int(end_dt.timestamp() * 1000),
+                ),
+                timeout=24,
+            )
+            process_closed_rows_for_counter(user_id, connection_id, closed_rows)
+            active_rows = await asyncio.wait_for(positions(api_key, api_secret), timeout=12)
+            _store_connection_positions_cache(connection_id, active_rows)
+            _cleanup_phantom_open_griders_deals(user_id, connection_id, active_rows)
+            synced += 1
+        except Exception as exc:
+            logger.warning("Griders open-deal sync failed for user %s connection %s: %s", user_id, connection_id, exc)
+        if synced < len(rows):
+            await asyncio.sleep(0.25)
+    return synced
+
+
+def _cleanup_phantom_open_griders_deals(user_id: int, connection_id: int, active_rows: list[dict]) -> int:
+    active_keys = {
+        key
+        for key in (_position_key(row) for row in active_rows)
+        if key is not None
+    }
+    open_rows = fetch_all(
+        """
+        SELECT id, pair, side, sent_at
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND status='open'
+          AND sent_at <= UTC_TIMESTAMP() - INTERVAL %s MINUTE
+        ORDER BY sent_at DESC, id DESC
+        """,
+        (user_id, connection_id, GRIDERS_OPEN_DEAL_CLEANUP_GRACE_MINUTES),
+    )
+    kept_active_keys: set[tuple[str, str]] = set()
+    canceled = 0
+    for row in open_rows:
+        pair = str(row.get("pair") or "").upper()
+        side = str(row.get("side") or "").lower()
+        key = (pair, side)
+        if key in active_keys and key not in kept_active_keys:
+            kept_active_keys.add(key)
+            continue
+        canceled += execute(
+            """
+            UPDATE ai_site_trade_deals
+            SET status='canceled',
+                close_order_type='phantom_open_cleanup',
+                updated_at=NOW()
+            WHERE id=%s AND status='open'
+            """,
+            (int(row["id"]),),
+        )
+    if canceled:
+        logger.info(
+            "Canceled %s phantom Griders open deals for user %s connection %s",
+            canceled,
+            user_id,
+            connection_id,
+        )
+    return canceled
+
+
+def _position_key(row: dict) -> tuple[str, str] | None:
+    try:
+        size = abs(float(row.get("size") or 0))
+    except (TypeError, ValueError):
+        size = 0
+    if size <= 0:
+        return None
+    pair = str(row.get("symbol") or "").upper()
+    raw_side = str(row.get("side") or "").lower()
+    side = "long" if raw_side == "buy" else ("short" if raw_side == "sell" else "")
+    if not pair or side not in {"long", "short"}:
+        return None
+    return pair, side
+
+
+def _oldest_open_griders_deal_sent_at(user_id: int, connection_id: int) -> datetime | None:
+    row = fetch_one(
+        """
+        SELECT MIN(sent_at) AS sent_at
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND status='open'
+        """,
+        (user_id, connection_id),
+    )
+    if not row or not row.get("sent_at"):
+        return None
+    return _as_utc_datetime(row.get("sent_at"))
+
+
 def _closed_pnl_view(row: dict, user: dict | None) -> dict:
     pnl = _float(row.get("closedPnl"))
     qty = _float(row.get("qty"))
@@ -2575,6 +3603,169 @@ def _closed_pnl_view(row: dict, user: dict | None) -> dict:
         "pnl_class": "positive" if pnl > 0 else ("negative" if pnl < 0 else ""),
         "time_ms": time_ms,
         "time": datetime.fromtimestamp(time_ms / 1000, tz=timezone.utc).astimezone(_user_zone(user)).strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def _griders_closed_pnl_views(
+    user_id: int,
+    connection_id: int,
+    start_dt: datetime,
+    end_dt: datetime,
+    user: dict | None,
+    limit: int | None = None,
+) -> list[dict]:
+    limit_clause = "LIMIT %s" if limit else ""
+    params: tuple = (
+        user_id,
+        connection_id,
+        start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    if limit:
+        params = (*params, int(limit))
+    rows = fetch_all(
+        f"""
+        SELECT pair, side, qty, avg_entry_price, avg_exit_price, closed_pnl, closed_at
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND status='closed'
+          AND closed_at >= %s
+          AND closed_at <= %s
+        ORDER BY closed_at DESC, id DESC
+        {limit_clause}
+        """,
+        params,
+    )
+    return [_griders_closed_pnl_view(row, user) for row in rows]
+
+
+def _griders_monitoring_summary(user_id: int, connection_id: int, start_dt: datetime, end_dt: datetime) -> dict:
+    row = fetch_one(
+        """
+        SELECT COUNT(*) AS total_trades,
+               COALESCE(SUM(closed_pnl), 0) AS total_pnl,
+               SUM(CASE WHEN closed_pnl > 0 THEN 1 ELSE 0 END) AS wins
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND status='closed'
+          AND closed_at >= %s
+          AND closed_at <= %s
+        """,
+        (
+            user_id,
+            connection_id,
+            start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    ) or {}
+    return {
+        "total_trades": int(row.get("total_trades") or 0),
+        "total_pnl": _float(row.get("total_pnl")),
+        "wins": int(row.get("wins") or 0),
+    }
+
+
+def _griders_daily_summary_pnl(
+    user_id: int,
+    connection_id: int,
+    start_dt: datetime,
+    end_dt: datetime,
+    start_date: str,
+    end_date: str,
+    user: dict | None,
+) -> tuple[list[dict], dict]:
+    rows = fetch_all(
+        """
+        SELECT closed_at, closed_pnl
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND status='closed'
+          AND closed_at >= %s
+          AND closed_at <= %s
+        ORDER BY closed_at ASC
+        """,
+        (
+            user_id,
+            connection_id,
+            start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    closed = []
+    total_pnl = 0.0
+    wins = 0
+    for row in rows:
+        closed_at = _as_utc_datetime(row.get("closed_at"))
+        pnl = _float(row.get("closed_pnl"))
+        total_pnl += pnl
+        if pnl > 0:
+            wins += 1
+        closed.append({
+            "time_ms": int(closed_at.timestamp() * 1000),
+            "pnl": pnl,
+        })
+    return _daily_pnl(closed, start_date, end_date, user), {
+        "total_trades": len(rows),
+        "total_pnl": total_pnl,
+        "wins": wins,
+    }
+
+
+def _griders_daily_pnl(
+    user_id: int,
+    connection_id: int,
+    start_dt: datetime,
+    end_dt: datetime,
+    start_date: str,
+    end_date: str,
+    user: dict | None,
+) -> list[dict]:
+    rows = fetch_all(
+        """
+        SELECT closed_at, closed_pnl
+        FROM ai_site_trade_deals
+        WHERE user_id=%s
+          AND connection_id <=> %s
+          AND status='closed'
+          AND closed_at >= %s
+          AND closed_at <= %s
+        ORDER BY closed_at ASC
+        """,
+        (
+            user_id,
+            connection_id,
+            start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    closed = []
+    for row in rows:
+        closed_at = _as_utc_datetime(row.get("closed_at"))
+        closed.append({
+            "time_ms": int(closed_at.timestamp() * 1000),
+            "pnl": _float(row.get("closed_pnl")),
+        })
+    return _daily_pnl(closed, start_date, end_date, user)
+
+
+def _griders_closed_pnl_view(row: dict, user: dict | None) -> dict:
+    pnl = _float(row.get("closed_pnl"))
+    closed_at = _as_utc_datetime(row.get("closed_at"))
+    time_ms = int(closed_at.timestamp() * 1000)
+    return {
+        "symbol": str(row.get("pair") or "").upper(),
+        "side": str(row.get("side") or "").lower(),
+        "qty": _fmt_monitor_number(_float(row.get("qty")), 4),
+        "entry": _fmt_monitor_number(_float(row.get("avg_entry_price")), 6),
+        "exit": _fmt_monitor_number(_float(row.get("avg_exit_price")), 6),
+        "pnl": pnl,
+        "pnl_text": _fmt_money(pnl),
+        "pnl_class": "positive" if pnl > 0 else ("negative" if pnl < 0 else ""),
+        "time_ms": time_ms,
+        "time": closed_at.astimezone(_user_zone(user)).strftime("%Y-%m-%d %H:%M"),
     }
 
 
@@ -2791,14 +3982,16 @@ async def _risk_pause_view(user_id: int, conn: dict | None, ignore_override: boo
 async def _risk_pause_views(user_id: int, conn: dict | None, ignore_override: bool = False) -> list[dict]:
     if not conn or not conn.get("bybit_api_key") or not conn.get("bybit_api_secret_encrypted"):
         return []
+    pauses: list[dict] = []
+    if (conn.get("strategy_code") or settings.DEFAULT_STRATEGY_CODE) not in {"market_shock_impulse_v1", "market_shock_reversal_dca_v21"}:
+        generic = await _generic_risk_pause_view(user_id, conn, ignore_override=ignore_override)
+        if generic:
+            pauses.append(generic)
     strategy_pauses = _strategy_pause_views(user_id, conn, ignore_override=ignore_override)
     grid_stop_pauses = _grid_dca_stop_pause_views(user_id, conn, ignore_override=ignore_override)
-    if strategy_pauses or grid_stop_pauses:
-        return [*strategy_pauses, *grid_stop_pauses]
-    if (conn.get("strategy_code") or settings.DEFAULT_STRATEGY_CODE) in {"market_shock_impulse_v1", "market_shock_reversal_dca_v21"}:
-        return []
-    generic = await _generic_risk_pause_view(user_id, conn, ignore_override=ignore_override)
-    return [generic] if generic else []
+    pauses.extend(strategy_pauses)
+    pauses.extend(grid_stop_pauses)
+    return pauses
 
 
 async def _generic_risk_pause_view(user_id: int, conn: dict | None, ignore_override: bool = False) -> dict | None:
@@ -2836,6 +4029,7 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
     watchlist = set(_watchlist((_strategy(user_id, connection_id) or {}).get("watchlist") or ""))
     now_ts = datetime.now(timezone.utc).timestamp()
     pauses: list[dict] = []
+    user_stop_pairs: set[str] = set()
 
     for row in _grid_dca_user_pair_stop_rows(user_id, connection_id, strategy_code):
         pair = str(row.get("pair") or "").upper()
@@ -2850,7 +4044,8 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
         remaining = max(0, int(ends_at_ts - now_ts))
         pauses.append({
             "type": "strategy_pause",
-            "scope": "pair",
+            "scope": "user_pair_stop",
+            "tone": "danger",
             "pair": pair,
             "title": f"Пауза пары {pair}",
             "button_label": f"Запустить пару {pair}",
@@ -2863,9 +4058,12 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
             "remaining_seconds": remaining,
             "remaining_label": _format_duration(remaining),
         })
+        user_stop_pairs.add(pair)
 
     for row in _grid_dca_global_pair_stop_rows(strategy_code):
         pair = str(row.get("pair") or "").upper()
+        if pair in user_stop_pairs:
+            continue
         if watchlist and pair not in watchlist:
             continue
         if not ignore_override and _strategy_pause_override_exists(user_id, connection_id, strategy_code, pair):
@@ -2877,7 +4075,8 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
         remaining = max(0, int(ends_at_ts - now_ts))
         pauses.append({
             "type": "strategy_pause",
-            "scope": "pair",
+            "scope": "global_pair_stop",
+            "tone": "warning",
             "pair": pair,
             "title": f"Системная пауза {pair}",
             "button_label": f"Запустить пару {pair}",
@@ -2891,15 +4090,13 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
             "remaining_label": _format_duration(remaining),
         })
 
-    seen: set[tuple[str, str]] = set()
-    unique = []
-    for pause in sorted(pauses, key=lambda item: int(item.get("ends_at_ms") or 0), reverse=True):
-        key = (pause.get("scope") or "", pause.get("pair") or "")
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(pause)
-    return unique
+    return sorted(
+        pauses,
+        key=lambda item: (
+            0 if item.get("scope") == "user_pair_stop" else 1,
+            -int(item.get("ends_at_ms") or 0),
+        ),
+    )
 
 
 def _grid_dca_stop_like_sql() -> str:
@@ -3043,7 +4240,7 @@ def _strategy_meta_view(strategy_code: str, lang: str) -> dict:
     texts = {
         "ru": {
             "grid_dca_v2": {
-                "name": "GRID DCA 2.6",
+                "name": "GRID DCA 2.8",
                 "description": "Стратегия стадии рынка: адаптивная сетка усреднения по ATR, тейк-профит, стоп-лосс и лимиты активных сделок.",
             },
             "grid_dca_v3": {
@@ -3061,7 +4258,7 @@ def _strategy_meta_view(strategy_code: str, lang: str) -> dict:
         },
         "en": {
             "grid_dca_v2": {
-                "name": "GRID DCA 2.6",
+                "name": "GRID DCA 2.8",
                 "description": STRATEGIES["grid_dca_v2"].description,
             },
             "grid_dca_v3": {
@@ -3087,7 +4284,7 @@ def _strategy_card_view(strategy_code: str, lang: str) -> dict:
     texts = {
         "ru": {
             "grid_dca_v2": {
-                "name": "GRID DCA 2.6",
+                "name": "GRID DCA 2.8",
                 "description": "Стратегия стадии рынка: адаптивная сетка усреднения по ATR, тейк-профит, стоп-лосс и лимиты активных сделок.",
                 "simple": "Подходит для спокойного рынка, откатов и участков, где цена ходит волнами. Сделка открывается с сеткой страховочных ордеров, чтобы усреднять вход.",
                 "profit": "Потенциал: умеренный, рассчитан на частые небольшие сделки.",
@@ -3096,7 +4293,7 @@ def _strategy_card_view(strategy_code: str, lang: str) -> dict:
             "grid_dca_v3": {
                 "name": "GRID DCA 3.1",
                 "description": "Более строгая тестовая версия GRID DCA. Доступна только администратору.",
-                "simple": "Использует те же пары и общий подход GRID DCA 2.6, но пропускает больше слабых входов: сильнее фильтрует BTC/ETH, объём, ATR, положение Bollinger Bands и импульсные свечи против сетки.",
+                "simple": "Использует те же пары и общий подход GRID DCA 2.8, но пропускает больше слабых входов: сильнее фильтрует BTC/ETH, объём, ATR, положение Bollinger Bands и импульсные свечи против сетки.",
                 "profit": "Потенциал: выше за счёт меньшего количества плохих входов, но сигналов будет меньше.",
                 "risk": "Риск: средний. Стратегия всё равно использует DCA и стоп-лосс, поэтому при сильном рынке против сетки возможны убытки.",
             },
@@ -3117,7 +4314,7 @@ def _strategy_card_view(strategy_code: str, lang: str) -> dict:
         },
         "en": {
             "grid_dca_v2": {
-                "name": "GRID DCA 2.6",
+                "name": "GRID DCA 2.8",
                 "description": STRATEGIES["grid_dca_v2"].description,
                 "simple": "Best for calmer markets, pullbacks, and wave-like price action. It opens a deal with safety orders to average the entry.",
                 "profit": "Potential: moderate, focused on frequent smaller deals.",
@@ -3126,7 +4323,7 @@ def _strategy_card_view(strategy_code: str, lang: str) -> dict:
             "grid_dca_v3": {
                 "name": "GRID DCA 3.1",
                 "description": STRATEGIES["grid_dca_v3"].description,
-                "simple": "Uses the same pairs and base idea as GRID DCA 2.6, but applies stricter BTC/ETH, volume, ATR, Bollinger, and impulse-candle filters.",
+                "simple": "Uses the same pairs and base idea as GRID DCA 2.8, but applies stricter BTC/ETH, volume, ATR, Bollinger, and impulse-candle filters.",
                 "profit": "Potential: higher filtering quality, but fewer signals.",
                 "risk": "Risk: medium. It still uses DCA and stop loss, so strong moves against the grid can produce losses.",
             },
@@ -3164,7 +4361,9 @@ def _volume_hint(strategy: dict, conn: dict | None, user: dict | None = None) ->
     first_order = max(float(strategy.get("min_order_volume") or settings.MIN_FIRST_ORDER_VOLUME), settings.MIN_FIRST_ORDER_VOLUME)
     if not is_admin:
         first_order = min(first_order, max_first_order)
-    manual_first_order_cap = _manual_first_order_cap(user, conn)
+    manual_first_order_cap = _free_plus_first_order_cap(user, conn) if _is_free_plus_plan(user) else _manual_first_order_cap(user, conn)
+    if _is_free_plus_plan(user) and manual_first_order_cap < settings.MIN_FIRST_ORDER_VOLUME:
+        manual_first_order_cap = settings.MIN_FIRST_ORDER_VOLUME
     if limits["code"] != "free" and not is_admin:
         first_order = min(first_order, manual_first_order_cap)
     leverage = 10
@@ -3172,7 +4371,13 @@ def _volume_hint(strategy: dict, conn: dict | None, user: dict | None = None) ->
     factor = _typical_safety_factor(settings.TYPICAL_SAFETY_ORDERS, settings.TYPICAL_MARTINGALE_MULTIPLIER)
     balance = float((conn or {}).get("last_balance") or 0)
     calculated_first_order = (balance * (risk_pct / 100.0) * leverage / factor) if balance > 0 and factor > 0 else 0.0
-    capped_calculated_first_order = min(calculated_first_order, max_first_order) if calculated_first_order > 0 else 0.0
+    if _is_free_plus_plan(user):
+        deposit_first_order_cap = _free_plus_first_order_cap(user, conn)
+    else:
+        deposit_first_order_cap = max_first_order
+    capped_calculated_first_order = min(calculated_first_order, deposit_first_order_cap) if calculated_first_order > 0 else 0.0
+    if _is_free_plus_plan(user) and capped_calculated_first_order < settings.MIN_FIRST_ORDER_VOLUME:
+        capped_calculated_first_order = settings.MIN_FIRST_ORDER_VOLUME
     total_notional = first_order * factor
     required_margin = total_notional / leverage
     deposit_pct = (required_margin / balance * 100) if balance > 0 else None
@@ -3194,9 +4399,11 @@ def _volume_hint(strategy: dict, conn: dict | None, user: dict | None = None) ->
         "first_order_mode": strategy.get("first_order_mode") or "manual",
         "max_first_order": _fmt_fixed(max_first_order),
         "manual_first_order_cap": _fmt_fixed(manual_first_order_cap),
+        "deposit_first_order_cap": _fmt_fixed(deposit_first_order_cap),
         "manual_first_order_cap_pct": _fmt_number(settings.MANUAL_FIRST_ORDER_MAX_DEPOSIT_PCT),
         "manual_first_order_cap_has_balance": bool(balance > 0 and not is_admin),
         "manual_first_order_unlimited": is_admin,
+        "free_plus_default_first_order": _is_free_plus_plan(user),
         "recommended_balance": _fmt_fixed(float(limits["recommended_balance"])) if limits.get("recommended_balance") else None,
         "calculated_first_order": _fmt_fixed(capped_calculated_first_order),
         "calculated_first_order_raw": calculated_first_order,
@@ -3221,6 +4428,18 @@ def _fmt_fixed(value: float) -> str:
     return f"{float(value):.2f}"
 
 
+def _signal_error_message(row: dict, response: dict | None) -> str | None:
+    message = row.get("error_message")
+    response = response if isinstance(response, dict) else {}
+    error_type = str(response.get("error_type") or response.get("error") or "")
+    error_text = str(response.get("error") or error_type or "").strip()
+    if error_type in {"ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout", "TimeoutException"} or "timeout" in error_text.lower():
+        return f"Cryptorg не ответил вовремя: {error_type or error_text}"
+    if response.get("exception") and error_text:
+        return f"Ошибка соединения с Cryptorg: {error_text}"
+    return str(message) if message else None
+
+
 def _signal_view(row: dict, lang: str = "ru", user: dict | None = None) -> dict:
     def loads(value, default):
         try:
@@ -3228,20 +4447,23 @@ def _signal_view(row: dict, lang: str = "ru", user: dict | None = None) -> dict:
         except Exception:
             return default
     reasons = loads(row.get("reasons"), [])
-    if row.get("error_message"):
+    response_obj = loads(row.get("response"), {})
+    error_message = _signal_error_message(row, response_obj)
+    if error_message:
         if row.get("status") == "failed":
-            reasons = [row["error_message"], *reasons]
+            reasons = [error_message, *reasons]
         else:
-            reasons = [*reasons, row["error_message"]]
+            reasons = [*reasons, error_message]
     if normalize_lang(lang) == "ru":
         reasons = [_translate_reason(reason) for reason in reasons]
     return {
         **row,
+        "error_message": error_message,
         "created_at_iso": _datetime_to_utc_iso(row.get("created_at")),
         "created_at": _format_user_datetime(row.get("created_at"), user),
         "reasons_list": reasons,
         "payload_obj": loads(row.get("payload"), {}),
-        "response_obj": loads(row.get("response"), {}),
+        "response_obj": response_obj,
     }
 
 
@@ -3276,8 +4498,15 @@ def _prune_user_signals(user_id: int) -> None:
                   FROM ai_signals
                   WHERE user_id=%s AND connection_id <=> %s
                   ORDER BY created_at DESC, id DESC
-                  LIMIT 50
+                  LIMIT 500
                 ) keep_rows
+              )
+              AND id NOT IN (
+                SELECT signal_id FROM (
+                  SELECT signal_id
+                  FROM ai_site_trade_deals
+                  WHERE signal_id IS NOT NULL
+                ) linked_deals
               )
             """,
             (user_id, connection_id, user_id, connection_id),

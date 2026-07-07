@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.strategies.title }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Настройки стратегий Griders: GRID DCA, лимиты сделок, первый ордер, риск, торговые пары и отчёт бэктеста стратегии 2.8.{% else %}Configure Griders strategies: GRID DCA, deal limits, first order size, risk, trading pairs, and the GRID DCA 2.8 backtest report.{% endif %}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <section class="page-head">
   <div>
@@ -54,11 +56,8 @@
         <p class="muted">{{ strategy_meta.description }}</p>
         {% if strategy_meta.code == "grid_dca_v2" %}
           <div class="strategy-report-links">
-            <a class="report-link" href="/static/reports/grid-dca-26-tariffs.html" target="_blank" rel="noopener">
-              {{ "Бэктест стратегии для бесплатного тарифа и тарифа Старт за период 06.05.2026 — 05.06.2026" if lang == "ru" else "Strategy backtest for Free and Start plans for 2026-05-06 — 2026-06-05" }}
-            </a>
-            <a class="report-link" href="/static/reports/grid-dca-26-year-tariffs.html" target="_blank" rel="noopener">
-              {{ "Бэктест стратегии для всех тарифов за период 11.06.2025 — 11.06.2026" if lang == "ru" else "Strategy backtest for all plans for 2025-06-11 — 2026-06-11" }}
+            <a class="report-link" href="/static/reports/grid-dca-27-year-tariffs-wide-limits.html" target="_blank" rel="noopener">
+              {{ "Бэктест GRID DCA 2.8 для всех тарифов за период 11.06.2025 - 11.06.2026" if lang == "ru" else "GRID DCA 2.8 backtest for all plans for 2025-06-11 - 2026-06-11" }}
             </a>
           </div>
         {% endif %}
@@ -90,6 +89,8 @@
       data-leverage="10"
       data-min-first-order="6"
       data-max-first-order="{{ volume_hint.max_first_order }}"
+      data-deposit-first-order-cap="{{ volume_hint.deposit_first_order_cap }}"
+      data-free-plus-default-first-order="{{ 1 if volume_hint.free_plus_default_first_order else 0 }}"
       data-manual-first-order-cap="{{ volume_hint.manual_first_order_cap }}"
       data-manual-first-order-unlimited="{{ 1 if volume_hint.manual_first_order_unlimited else 0 }}"
       data-first-order-mode="{{ volume_hint.first_order_mode }}"
@@ -187,13 +188,13 @@
 
     <div class="settings-section form-grid">
       <label>{{ ui.strategies.max_active_deals }}
-        <input name="max_active_deals" type="number" min="0" max="{{ plan_limits.max_active_deals }}" value="{{ strategy.max_active_deals if strategy.max_active_deals is not none else 2 }}">
+        <input name="max_active_deals" type="number" min="0" max="{{ plan_limits.max_active_deals }}" value="{{ strategy.max_active_deals if strategy.max_active_deals is not none else plan_limits.max_active_deals }}">
       </label>
       <label>{{ ui.strategies.max_long_deals }}
-        <input name="max_long_deals" type="number" min="0" max="{{ plan_limits.max_long_deals }}" value="{{ strategy.max_long_deals if strategy.max_long_deals is not none else 1 }}">
+        <input name="max_long_deals" type="number" min="0" max="{{ plan_limits.max_long_deals }}" value="{{ strategy.max_long_deals if strategy.max_long_deals is not none else plan_limits.max_long_deals }}">
       </label>
       <label>{{ ui.strategies.max_short_deals }}
-        <input name="max_short_deals" type="number" min="0" max="{{ plan_limits.max_short_deals }}" value="{{ strategy.max_short_deals if strategy.max_short_deals is not none else 1 }}">
+        <input name="max_short_deals" type="number" min="0" max="{{ plan_limits.max_short_deals }}" value="{{ strategy.max_short_deals if strategy.max_short_deals is not none else plan_limits.max_short_deals }}">
       </label>
       <p class="form-note form-wide">{{ ui.strategies.deal_limits_help }}</p>
       <p class="form-note form-wide plan-limit-note">
@@ -204,7 +205,7 @@
         {% endif %}
       </p>
       {% if user_access.is_free %}
-        <p class="form-note form-wide plan-limit-note">{{ "На бесплатном тарифе можно выбрать: максимум активных сделок — от 0 до 4, максимум лонг-сделок — от 0 до 2, максимум шорт-сделок — от 0 до 2." if lang == "ru" else "On the free plan you can choose: max active deals from 0 to 4, max long deals from 0 to 2, max short deals from 0 to 2." }}</p>
+        <p class="form-note form-wide plan-limit-note">{{ "На бесплатном тарифе можно выбрать: максимум активных сделок — от 0 до 4, максимум лонг-сделок — от 0 до 4, максимум шорт-сделок — от 0 до 4." if lang == "ru" else "On the free plan you can choose: max active deals from 0 to 4, max long deals from 0 to 4, max short deals from 0 to 4." }}</p>
       {% endif %}
     </div>
 
@@ -311,6 +312,8 @@
     const maxRecommended = Number(calculator.dataset.maxRecommended || 5);
     const minFirstOrder = Number(calculator.dataset.minFirstOrder || 6);
     const maxFirstOrder = Number(calculator.dataset.maxFirstOrder || 100000);
+    const maxDepositFirstOrder = Number(calculator.dataset.depositFirstOrderCap || maxFirstOrder);
+    const freePlusDefaultFirstOrder = calculator.dataset.freePlusDefaultFirstOrder === "1";
     const maxManualFirstOrder = Number(calculator.dataset.manualFirstOrderCap || maxFirstOrder);
     const manualFirstOrderUnlimited = calculator.dataset.manualFirstOrderUnlimited === "1";
 
@@ -335,7 +338,9 @@
       const calculatedFirstOrder = balance > 0 ? balance * (risk / 100) * leverage / gridFactor() : 0;
       const manualInputValue = Number(firstOrderInput.value || minFirstOrder);
       const firstOrder = mode === "deposit_pct"
-        ? Math.min(maxFirstOrder, Math.max(0, calculatedFirstOrder))
+        ? (freePlusDefaultFirstOrder
+          ? Math.min(maxDepositFirstOrder, Math.max(minFirstOrder, calculatedFirstOrder))
+          : Math.min(maxFirstOrder, Math.max(0, calculatedFirstOrder)))
         : (manualFirstOrderUnlimited ? Math.max(minFirstOrder, manualInputValue) : Math.min(maxManualFirstOrder, Math.max(minFirstOrder, manualInputValue)));
       const plannedMargin = firstOrder * gridFactor() / leverage;
       const actualPct = balance > 0 ? plannedMargin / balance * 100 : null;
@@ -344,7 +349,7 @@
       const isHighRisk = risk > maxRecommended;
       const minOrderLimitsDeal = balance > 0 && actualPct > risk;
       const riskLocked = riskInput.dataset.planLocked === "1";
-      const orderTooLow = mode === "deposit_pct" && balance > 0 && calculatedFirstOrder < minFirstOrder;
+      const orderTooLow = mode === "deposit_pct" && !freePlusDefaultFirstOrder && balance > 0 && calculatedFirstOrder < minFirstOrder;
       const manualTooHigh = !manualFirstOrderUnlimited && mode === "manual" && !firstOrderInput.disabled && manualInputValue > maxManualFirstOrder;
       const manualMode = mode === "manual";
       const firstOrderLocked = firstOrderInput.dataset.planLocked === "1";

@@ -50,10 +50,16 @@ def _max_first_order_for_row(row: dict) -> float:
     if str(row.get("role") or "user") == "admin":
         return 100000.0
     plan = str(row.get("plan") or "free").lower()
+    if plan == "premium_plus":
+        return 2000.0
     if plan == "premium":
         return 600.0
+    if plan == "start_plus":
+        return 120.0
     if plan == "start":
         return 60.0
+    if plan == "free_plus":
+        return 12.0
     return settings.MIN_FIRST_ORDER_VOLUME
 
 
@@ -403,8 +409,15 @@ def _prune_user_signals(user_id: int) -> None:
                   FROM ai_signals
                   WHERE user_id=%s AND connection_id <=> %s
                   ORDER BY created_at DESC, id DESC
-                  LIMIT 50
+                  LIMIT 500
                 ) keep_rows
+              )
+              AND id NOT IN (
+                SELECT signal_id FROM (
+                  SELECT signal_id
+                  FROM ai_site_trade_deals
+                  WHERE signal_id IS NOT NULL
+                ) linked_deals
               )
             """,
             (user_id, connection_id, user_id, connection_id),

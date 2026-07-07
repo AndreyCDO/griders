@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.dashboard.title }} · {{ app_name }}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Личный кабинет Griders с обзором подключений Cryptorg, баланса, активных стратегий, сделок, PnL и системных уведомлений.{% else %}Griders dashboard with Cryptorg connections, balance overview, active strategies, deals, PnL, and system notifications.{% endif %}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <section class="page-head">
   <div>
@@ -22,9 +24,39 @@
 </section>
 {% endif %}
 
+{% if unprotected_positions %}
+  {% for item in unprotected_positions %}
+    <section class="risk-alert unmanaged-position-alert">
+      <div>
+        <strong>{{ "Внимание: открытая позиция без закрывающих ордеров" if lang == "ru" else "Warning: open position without closing orders" }}</strong>
+        <p>
+          {% if lang == "ru" %}
+            По паре <b>{{ item.pair }}</b> открыта позиция {{ item.side_label }} в подключении <b>{{ item.connection_label }}</b>.
+            Griders не управляет этой позицией: по ней не найден тейк-профит или другой закрывающий ордер.
+          {% else %}
+            There is an open {{ item.side_label }} position on <b>{{ item.pair }}</b> in <b>{{ item.connection_label }}</b>.
+            Griders does not manage this position: no take-profit or other closing order was found.
+          {% endif %}
+        </p>
+        <p>
+          {% if lang == "ru" %}
+            Размер: <b>{{ item.size }}</b>, вход: <b>{{ item.avg_price }}</b>, текущая цена: <b>{{ item.mark_price }}</b>, текущий PnL: <b>{{ item.unrealised_pnl }} USDT</b>.
+          {% else %}
+            Size: <b>{{ item.size }}</b>, entry: <b>{{ item.avg_price }}</b>, current price: <b>{{ item.mark_price }}</b>, current PnL: <b>{{ item.unrealised_pnl }} USDT</b>.
+          {% endif %}
+        </p>
+        <p>
+          <b>{{ "Необходимо зайти в Cryptorg и закрыть эту позицию вручную." if lang == "ru" else "Please open Cryptorg and close this position manually." }}</b>
+        </p>
+      </div>
+      <a class="button danger" href="/monitoring?connection_id={{ item.connection_id }}">{{ "Открыть мониторинг" if lang == "ru" else "Open monitoring" }}</a>
+    </section>
+  {% endfor %}
+{% endif %}
+
 {% if risk_pauses %}
   {% for pause in risk_pauses %}
-    <section class="risk-alert">
+    <section class="risk-alert {{ 'system-pause-alert' if pause.scope == 'global_pair_stop' or pause.tone == 'warning' else '' }}">
       <div>
         <strong>{{ pause.title or "Стратегия на паузе" }}</strong>
         <p>{{ pause.reason }}</p>
@@ -33,7 +65,7 @@
       <form method="post" action="/risk/override">
         <input type="hidden" name="pause_type" value="{{ pause.type }}">
         <input type="hidden" name="pair" value="{{ pause.pair or '' }}">
-        <button class="button danger" type="submit">{{ pause.button_label or "Запустить стратегию сейчас" }}</button>
+        <button class="button {{ 'warning' if pause.scope == 'global_pair_stop' or pause.tone == 'warning' else 'danger' }}" type="submit">{{ pause.button_label or "Запустить стратегию сейчас" }}</button>
       </form>
     </section>
   {% endfor %}
