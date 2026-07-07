@@ -7,10 +7,5 @@ cryptorg_webhook_issue_logs_*.md
 working-example/config.php
 working-example/ctgacademy_r.sql
 
-m1/m1_server
-m1/m1_server.exe
-m1/*.o
-m1_data/
-
 webapp/static/reports/*year-tariffs.html
 webapp/static/reports/*year-tariffs.json
