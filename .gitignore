@@ -6,6 +6,8 @@ __pycache__/
 cryptorg_webhook_issue_logs_*.md
 
 # Local secrets
+.env
+webinar_bot.sqlite3
 working-example/config.php
 working-example/ctgacademy_r.sql
 
