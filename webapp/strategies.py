@@ -1,8 +1,8 @@
-﻿"""Strategy definitions for the MVP."""
+"""Strategy definitions for the MVP."""
 
 from dataclasses import dataclass
 
-from market import analyze_indicators, get_candles, get_orderbook, get_price, get_recent_trades
+from market import analyze_indicators, get_orderbook, get_price
 
 
 @dataclass(frozen=True)
@@ -16,25 +16,8 @@ class Strategy:
 STRATEGIES = {
     "grid_dca_v2": Strategy(
         code="grid_dca_v2",
-        name="GRID DCA 2.8",
-        description="Market-stage GRID DCA strategy with RSI 15m/1h filters, ATR-adaptive averaging, BTC/ETH market guard, take profit, stop loss, and deal limits.",
-    ),
-    "grid_dca_v3": Strategy(
-        code="grid_dca_v3",
-        name="GRID DCA 3.1",
-        description="Admin-only stricter GRID DCA strategy: tighter RSI 15m/1h and market filters, stronger BTC/ETH guard, ATR-adaptive DCA, take profit, stop loss, and deal limits.",
-    ),
-    "market_shock_impulse_v1": Strategy(
-        code="market_shock_impulse_v1",
-        name="MarketShok Impulse 2.0",
-        description="Breakout strategy inspired by Cryptorg Market Shock: it looks for abnormal futures impulses, volume expansion, and continuation confirmation.",
-        timeframe="1",
-    ),
-    "market_shock_reversal_dca_v21": Strategy(
-        code="market_shock_reversal_dca_v21",
-        name="MarketShok Reversal DCA 3.0",
-        description="Admin-only experimental Market Shock short-biased strategy: shorts upward overextensions against the impulse and downward shocks with continuation, using adaptive DCA, TP, SL, and strict deal limits.",
-        timeframe="1",
+        name="GRID DCA 2.9",
+        description="Market-stage GRID DCA strategy with RSI 15m/1h filters, ATR-adaptive averaging, BTC/ETH market guard, stage-dependent take profit, wider stop loss, and deal limits.",
     ),
 }
 
@@ -51,8 +34,10 @@ GRID_PRESETS = {
         "max_step": 1.8,
         "min_tp": 0.35,
         "max_tp": 0.75,
+        "tp_multiplier": 1.0,
         "min_stop": 3.0,
         "max_stop": 6.0,
+        "sl_multiplier": 1.3,
     },
     "trend": {
         "dca_max": 3,
@@ -65,8 +50,10 @@ GRID_PRESETS = {
         "max_step": 2.4,
         "min_tp": 0.45,
         "max_tp": 1.0,
+        "tp_multiplier": 1.15,
         "min_stop": 3.0,
         "max_stop": 6.5,
+        "sl_multiplier": 1.3,
     },
     "pullback": {
         "dca_max": 5,
@@ -79,15 +66,15 @@ GRID_PRESETS = {
         "max_step": 2.0,
         "min_tp": 0.4,
         "max_tp": 0.85,
+        "tp_multiplier": 1.2,
         "min_stop": 3.5,
         "max_stop": 6.5,
+        "sl_multiplier": 1.3,
     },
 }
 
 
 async def analyze_pair(pair: str, strategy_code: str = "grid_dca_v2") -> dict:
-    if strategy_code in {"market_shock_impulse_v1", "market_shock_reversal_dca_v21"}:
-        return await _analyze_market_shock_impulse(pair)
     return await _analyze_grid_dca(pair)
 
 
@@ -204,100 +191,6 @@ async def _analyze_grid_dca(pair: str) -> dict:
     }
 
 
-async def _analyze_market_shock_impulse(pair: str) -> dict:
-    price, candles_1m, indicators_5m, indicators_15m, orderbook, trades = await _gather_impulse_context(pair)
-    one_minute = candles_1m.get("candles", [])
-    ind_5m = indicators_5m.get("indicators", {})
-    ind_15m = indicators_15m.get("indicators", {})
-    signals_5m = indicators_5m.get("signals", {})
-    signals_15m = indicators_15m.get("signals", {})
-
-    last_price = float(price.get("price") or 0)
-    spread_pct = float(orderbook.get("spread_pct") or 99)
-    atr = float(ind_5m.get("atr") or ind_15m.get("atr") or 0)
-    atr_pct = (atr / last_price * 100) if last_price else 0
-    move_3m = _window_move_pct(one_minute, 3)
-    move_5m = _window_move_pct(one_minute, 5)
-    shock_move = move_3m if abs(move_3m) >= abs(move_5m) else move_5m
-    volume_ratio = _recent_volume_ratio(one_minute, window=5, lookback=30)
-    direction = "long" if shock_move > 0 else "short"
-    trend_5m = _trend_from_indicators(ind_5m, signals_5m)
-    trend_15m = _trend_from_indicators(ind_15m, signals_15m)
-    aggression = str(trades.get("aggression") or "BALANCED")
-
-    reasons = [
-        "стратегия: MarketShok Impulse 2.0",
-        f"импульс: {shock_move:.2f}% за 3-5 минут",
-        f"объём импульса: x{volume_ratio:.2f}",
-        f"тренд 5м: {_trend_label(trend_5m)}",
-        f"тренд 15м: {_trend_label(trend_15m)}",
-    ]
-    side = "wait"
-    confidence = 0.0
-
-    tradable, block_reason = _impulse_tradability_filter(
-        shock_move=shock_move,
-        spread_pct=spread_pct,
-        volume_ratio=volume_ratio,
-        atr_pct=atr_pct,
-        direction=direction,
-        trend_5m=trend_5m,
-        trend_15m=trend_15m,
-        aggression=aggression,
-    )
-    if not tradable:
-        reasons.append(block_reason)
-    else:
-        side = direction
-        confidence = _impulse_confidence(abs(shock_move), volume_ratio, trend_5m, trend_15m, aggression, direction)
-        reasons += [
-            "подходящий рыночный шок по Market Shock",
-            "объём и тренд подтверждают продолжение движения",
-            "вход готовится через один Ghost Bot",
-        ]
-
-    grid = _impulse_grid(abs(shock_move), atr_pct)
-    if side == "wait":
-        reasons.append("нет подтверждения для импульсного входа")
-    else:
-        reasons += [
-            f"шаг сетки: {grid['dca_percent']}%",
-            f"тейк-профит: {grid['take_profit']}%",
-            f"стоп-лосс: {grid['stop_loss']}%",
-        ]
-
-    return {
-        "pair": pair.upper(),
-        "side": side,
-        "confidence": confidence,
-        "price": last_price,
-        "market_stage": "impulse",
-        "grid": grid,
-        "reasons": reasons,
-        "snapshot": {
-            "strategy": "market_shock_impulse_v1",
-            "shock_move_pct": round(shock_move, 3),
-            "volume_ratio": round(volume_ratio, 3),
-            "atr_pct": round(atr_pct, 3),
-            "trend_5m": trend_5m,
-            "trend_15m": trend_15m,
-            "spread_pct": spread_pct,
-            "aggression": aggression,
-        },
-    }
-
-
-async def _gather_impulse_context(pair: str) -> tuple[dict, dict, dict, dict, dict, dict]:
-    import asyncio
-
-    return await asyncio.gather(
-        get_price(pair),
-        get_candles(pair, interval="1", limit=60),
-        analyze_indicators(pair, interval="5"),
-        analyze_indicators(pair, interval="15"),
-        get_orderbook(pair),
-        get_recent_trades(pair, limit=80),
-    )
 
 
 def _trend_from_indicators(indicators: dict, signals: dict) -> str:
@@ -364,122 +257,8 @@ def _tradability_filter(spread_pct: float, atr_pct: float, volume_ratio: float) 
     return True, "можно торговать"
 
 
-def _window_move_pct(candles: list[dict], minutes: int) -> float:
-    if len(candles) < minutes + 1:
-        return 0.0
-    start = float(candles[-minutes - 1].get("close") or candles[-minutes - 1].get("open") or 0)
-    end = float(candles[-1].get("close") or 0)
-    if start <= 0:
-        return 0.0
-    return (end - start) / start * 100
 
 
-def _recent_volume_ratio(candles: list[dict], window: int = 5, lookback: int = 30) -> float:
-    if len(candles) < window + 2:
-        return 1.0
-    recent = candles[-window:]
-    history = candles[-lookback - window:-window] if len(candles) >= lookback + window else candles[:-window]
-    recent_avg = sum(float(item.get("volume") or 0) for item in recent) / max(len(recent), 1)
-    history_avg = sum(float(item.get("volume") or 0) for item in history) / max(len(history), 1)
-    return recent_avg / history_avg if history_avg > 0 else 1.0
-
-
-def _impulse_tradability_filter(
-    shock_move: float,
-    spread_pct: float,
-    volume_ratio: float,
-    atr_pct: float,
-    direction: str,
-    trend_5m: str,
-    trend_15m: str,
-    aggression: str,
-) -> tuple[bool, str]:
-    impulse_size = abs(shock_move)
-    if spread_pct > 0.10:
-        return False, "слишком широкий спред для импульсного входа"
-    if impulse_size < 3.0:
-        return False, "импульс меньше 3%, это ниже рабочего фильтра Market Shock"
-    if impulse_size > 9.0:
-        return False, "слишком сильный импульс, вход может быть поздним"
-    if volume_ratio < 1.8:
-        return False, "нет подтверждения объёмом"
-    if atr_pct > 7.0:
-        return False, "волатильность слишком высокая для импульсного входа"
-    if direction == "long" and trend_5m == "bearish" and trend_15m == "bearish":
-        return False, "вход против старшего нисходящего тренда"
-    if direction == "short" and trend_5m == "bullish" and trend_15m == "bullish":
-        return False, "вход против старшего восходящего тренда"
-    if direction == "long" and aggression == "SELLERS":
-        return False, "лента сделок не подтверждает лонг"
-    if direction == "short" and aggression == "BUYERS":
-        return False, "лента сделок не подтверждает шорт"
-    return True, "импульс подтверждён"
-
-
-def _impulse_confidence(
-    impulse_size: float,
-    volume_ratio: float,
-    trend_5m: str,
-    trend_15m: str,
-    aggression: str,
-    direction: str,
-) -> float:
-    score = 0.62
-    if impulse_size >= 4.0:
-        score += 0.06
-    if impulse_size >= 6.0:
-        score += 0.05
-    if volume_ratio >= 2.5:
-        score += 0.06
-    if direction == "long" and trend_5m == "bullish":
-        score += 0.04
-    if direction == "short" and trend_5m == "bearish":
-        score += 0.04
-    if direction == "long" and trend_15m == "bullish":
-        score += 0.03
-    if direction == "short" and trend_15m == "bearish":
-        score += 0.03
-    if (direction == "long" and aggression == "BUYERS") or (direction == "short" and aggression == "SELLERS"):
-        score += 0.04
-    return round(_clamp(score, 0.0, 0.88), 2)
-
-
-def _impulse_grid(impulse_size: float, atr_pct: float) -> dict:
-    if impulse_size < 5:
-        dca_max = 1
-        dca_active = 1
-        step = _clamp(max(impulse_size * 0.42, atr_pct * 0.9), 1.2, 1.8)
-        stop_min, stop_max = 2.6, 3.8
-        multiplier_volume = "1.1"
-    elif impulse_size < 8:
-        dca_max = 2
-        dca_active = 2
-        step = _clamp(max(impulse_size * 0.36, atr_pct * 0.95), 1.8, 2.6)
-        stop_min, stop_max = 3.6, 5.2
-        multiplier_volume = "1.12"
-    else:
-        dca_max = 2
-        dca_active = 2
-        step = _clamp(max(impulse_size * 0.3, atr_pct), 2.4, 3.2)
-        stop_min, stop_max = 5.0, 6.0
-        multiplier_volume = "1.1"
-
-    multiplier_price = 1.15
-    grid_coverage = _grid_coverage(step, dca_active, multiplier_price)
-    take_profit = _clamp(max(impulse_size * 0.34, atr_pct * 0.9), 1.0, 2.6)
-    stop_loss = _clamp(max(impulse_size * 0.65, atr_pct * 1.4, grid_coverage * 1.05, take_profit * 1.9), stop_min, stop_max)
-    return {
-        "dca_max": dca_max,
-        "dca_active": dca_active,
-        "dca_percent": _fmt_pct(step),
-        "dca_multiplier_volume": multiplier_volume,
-        "dca_multiplier_price": _fmt_pct(multiplier_price),
-        "take_profit": _fmt_pct(take_profit),
-        "stop_loss": _fmt_pct(stop_loss),
-        "stop_delay": 2,
-        "atr_pct": round(atr_pct, 3),
-        "grid_coverage_pct": _fmt_pct(grid_coverage),
-    }
 
 
 def _stage_label(stage: str) -> str:
@@ -504,12 +283,14 @@ def _grid_for_stage(stage: str, atr_pct: float) -> dict:
     preset = dict(GRID_PRESETS[stage])
     step = _clamp(atr_pct * float(preset["atr_step_mult"]), float(preset["min_step"]), float(preset["max_step"]))
     take_profit = _clamp(step * 0.55, float(preset["min_tp"]), float(preset["max_tp"]))
+    take_profit = min(1.0, take_profit * float(preset.get("tp_multiplier") or 1.0))
     grid_coverage = _grid_coverage(
         step=step,
         active=int(preset["dca_active"]),
         multiplier_price=float(preset["dca_multiplier_price"]),
     )
     stop_loss = _clamp(grid_coverage * 1.25, float(preset["min_stop"]), float(preset["max_stop"]))
+    stop_loss *= float(preset.get("sl_multiplier") or 1.0)
 
     return {
         "dca_max": preset["dca_max"],

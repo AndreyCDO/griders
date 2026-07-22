@@ -10,6 +10,7 @@ import httpx
 
 RECV_WINDOW = os.getenv("BYBIT_RECV_WINDOW", "30000")
 BASE_URL = "https://api.bybit.com"
+_HTTP_CLIENT: httpx.AsyncClient | None = None
 SIGNATURE_ERROR_HELP = (
     "API вернул ошибку подписи. Проверьте, что ключ API и секрет API взяты из одной "
     "связки Cryptorg Bybit Liquidity, а при смене ключа секрет тоже был введён заново."
@@ -18,6 +19,16 @@ SIGNATURE_ERROR_HELP = (
 
 class CryptorgMonitorError(Exception):
     pass
+
+
+def _http_client() -> httpx.AsyncClient:
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed:
+        _HTTP_CLIENT = httpx.AsyncClient(
+            timeout=15,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+        )
+    return _HTTP_CLIENT
 
 
 def _query(params: dict) -> str:
@@ -36,8 +47,7 @@ async def monitor_get(path: str, api_key: str, api_secret: str, params: dict) ->
         "X-BAPI-RECV-WINDOW": RECV_WINDOW,
         "X-BAPI-SIGN": signature,
     }
-    async with httpx.AsyncClient(timeout=15) as client:
-        response = await client.get(f"{BASE_URL}{path}?{query}", headers=headers)
+    response = await _http_client().get(f"{BASE_URL}{path}?{query}", headers=headers)
     response.raise_for_status()
     data = response.json()
     if int(data.get("retCode", -1)) != 0:

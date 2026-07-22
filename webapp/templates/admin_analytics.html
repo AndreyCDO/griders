@@ -8,6 +8,12 @@
   <p>{{ "Пользователи, итоги сайта и подтверждённые сделки Griders собраны отдельно от обычного профиля." if lang == "ru" else "Users, site totals, and confirmed Griders trades are separated from the regular profile." }}</p>
 </section>
 
+<section class="panel">
+  <div class="form-actions">
+    <a class="button secondary" href="/admin/controls">{{ "Управление торговлей" if lang == "ru" else "Trading controls" }}</a>
+  </div>
+</section>
+
 {% if success %}
   <div class="alert success">
     {% if success == "plans" %}
@@ -27,97 +33,46 @@
 {% endif %}
 {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
 
-<details class="panel admin-users-panel" open>
-  <summary class="admin-users-summary">
-    <div>
-      <h2>{{ "Пользователи" if lang == "ru" else "Users" }}</h2>
-      <p class="muted">{{ "Тарифы, активность и PnL только по подтверждённым сделкам Griders." if lang == "ru" else "Plans, activity, and PnL from confirmed Griders trades only." }}</p>
-    </div>
-    <span class="button tiny admin-users-toggle">{{ "Свернуть / развернуть" if lang == "ru" else "Collapse / expand" }}</span>
-  </summary>
-  <form method="post" action="/profile/admin/users">
-    <div class="form-actions admin-users-filter-actions">
-      <button class="button secondary tiny" type="button" data-toggle-inactive-users>
-        {{ "Скрыть неактивных пользователей" if lang == "ru" else "Hide inactive users" }}
-      </button>
-    </div>
-    <div class="table-wrap">
-      <table class="admin-users-table">
-        <thead>
+{% if admin_pending_connections %}
+<section class="panel">
+  <h2>{{ "Подключения ожидают одобрения" if lang == "ru" else "Connections Pending Approval" }}</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ "Дата" if lang == "ru" else "Date" }}</th>
+          <th>e-mail</th>
+          <th>{{ "Ник" if lang == "ru" else "Nickname" }}</th>
+          <th>{{ "Телеграм" if lang == "ru" else "Telegram" }}</th>
+          <th>{{ "Подключение" if lang == "ru" else "Connection" }}</th>
+          <th>API</th>
+          <th>{{ "Действие" if lang == "ru" else "Action" }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in admin_pending_connections %}
           <tr>
-            <th>№</th>
-            <th>e-mail</th>
-            <th>{{ "Ник пользователя" if lang == "ru" else "Nickname" }}</th>
-            <th>{{ "Телеграм" if lang == "ru" else "Telegram" }}</th>
-            <th>{{ "Дата регистрации" if lang == "ru" else "Registration date" }}</th>
-            <th>PNL<br>USDT</th>
-            <th>{{ "Тариф" if lang == "ru" else "Plan" }}</th>
-            <th>{{ "Реферал" if lang == "ru" else "Referral" }}</th>
-            <th>{{ "Действия" if lang == "ru" else "Actions" }}</th>
+            <td>{{ item.created_at_display }}</td>
+            <td><a class="admin-email" href="/admin/users/{{ item.user_id }}/view">{{ item.email }}</a></td>
+            <td>{{ item.nickname or "—" }}</td>
+            <td>{% if item.telegram_username %}@{{ item.telegram_username }}{% else %}—{% endif %}</td>
+            <td><strong>{{ item.label }}</strong><br><span class="muted">{{ item.strategy_name }}</span></td>
+            <td>{{ item.api_key_masked or "—" }}</td>
+            <td>
+              <form method="post" action="/admin/connections/approve">
+                <input type="hidden" name="connection_id" value="{{ item.id }}">
+                <button class="button primary tiny" type="submit">{{ "Одобрить" if lang == "ru" else "Approve" }}</button>
+              </form>
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          {% for account in admin_users %}
-            <tr data-plan-row data-user-active="{{ '1' if account.connection_status == 'active' else '0' }}">
-              <td data-row-number>{{ loop.index }}</td>
-              <td>
-                <a class="admin-email admin-user-view-link {{ account.connection_status_class }}" href="/admin/users/{{ account.id }}/view" title="{{ 'Открыть профиль пользователя в режиме просмотра' if lang == 'ru' else 'Open user profile in read-only view' }}">{{ account.email }}</a>
-                {% if account.role == "admin" %}<span class="badge">{{ "Админ" if lang == "ru" else "Admin" }}</span>{% endif %}
-              </td>
-              <td>{{ account.nickname or "—" }}</td>
-              <td>
-                {% if account.telegram_username %}
-                  @{{ account.telegram_username }}
-                  {% if account.telegram_user_id %}<span class="badge">ok</span>{% endif %}
-                {% else %}
-                  —
-                {% endif %}
-              </td>
-              <td>{{ account.created_date_display }}</td>
-              <td><strong class="{{ account.pnl_class }}">{{ account.cumulative_pnl }}</strong></td>
-              <td>
-                <select name="plan_{{ account.id }}" {% if account.role == "admin" %}disabled{% endif %}>
-                  {% for code in base_tariff_codes %}
-                    {% set limits = tariffs[code] %}
-                    <option value="{{ code }}" {% if account.plan == code or (account.role == "admin" and code == "premium") %}selected{% endif %}>
-                      {{ limits.name_ru if lang == "ru" else limits.name_en }}
-                    </option>
-                  {% endfor %}
-                </select>
-                {% if account.role == "admin" %}<input type="hidden" name="plan_{{ account.id }}" value="premium">{% endif %}
-              </td>
-              <td>
-                <label class="checkbox-inline">
-                  <input type="checkbox" name="referral_{{ account.id }}" value="1" {% if account.referral_verified %}checked{% endif %} {% if account.role == "admin" %}disabled{% endif %}>
-                </label>
-              </td>
-              <td>
-                {% if account.role != "admin" and account.id != profile_user.id %}
-                  <button class="button danger tiny" type="submit" formaction="/profile/admin/users/delete" formmethod="post" name="delete_user_id" value="{{ account.id }}" onclick="return confirm('{{ 'Удалить пользователя и все связанные данные?' if lang == 'ru' else 'Delete this user and all related data?' }}')">
-                    {{ "Удалить" if lang == "ru" else "Delete" }}
-                  </button>
-                {% else %}
-                  <span class="muted">—</span>
-                {% endif %}
-              </td>
-            </tr>
-          {% endfor %}
-        </tbody>
-        <tfoot>
-          <tr class="admin-total-row">
-            <td colspan="5"><strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}</strong></td>
-            <td><strong class="{{ admin_users_totals.pnl_class }}">{{ admin_users_totals.total_pnl_text }}</strong></td>
-            <td colspan="3"><strong>{{ "Активных пользователей" if lang == "ru" else "Active users" }}: {{ admin_users_totals.active_users_count }} / {{ admin_users_totals.users_count }}</strong></td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-    <div class="form-actions">
-      <button class="button secondary" type="submit" formaction="/profile/admin/users/refresh" formmethod="post">{{ "Обновить статусы" if lang == "ru" else "Refresh statuses" }}</button>
-      <button class="button primary" type="submit">{{ "Сохранить тарифы" if lang == "ru" else "Save plans" }}</button>
-    </div>
-  </form>
-</details>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+
 
 <section class="panel admin-site-stats">
   <h2>{{ "Итоги по сайту" if lang == "ru" else "Site totals" }}</h2>
@@ -127,6 +82,7 @@
       <thead>
         <tr>
           <th>{{ "Пользователей" if lang == "ru" else "Users" }}</th>
+          <th>{{ "Активных пользователей" if lang == "ru" else "Active users" }}</th>
           <th>{{ "Сделок" if lang == "ru" else "Deals" }}</th>
           <th>{{ "Объём" if lang == "ru" else "Volume" }}</th>
         </tr>
@@ -134,6 +90,7 @@
       <tbody>
         <tr>
           <td><strong>{{ admin_site_stats.users_count }}</strong></td>
+          <td><strong>{{ admin_site_stats.active_users_count }}</strong></td>
           <td><strong>{{ admin_site_stats.deals_count }}</strong></td>
           <td><strong>{{ admin_site_stats.traded_volume }} USDT</strong></td>
         </tr>
@@ -145,9 +102,6 @@
 {% if admin_trade_analysis %}
 <section class="panel admin-trade-analysis">
   <h2>{{ "Анализ результатов сделок" if lang == "ru" else "Trade Outcome Analysis" }}</h2>
-  <p class="form-note">
-    {{ "Unknown и manual объединены со стопом при минусовом PnL и с тейк-профитом при плюсовом PnL." if lang == "ru" else "Unknown and manual are merged into stop loss for negative PnL and take profit for positive PnL." }}
-  </p>
   <div class="table-wrap">
     <table>
       <thead>
@@ -211,6 +165,101 @@
     <span class="{{ admin_griders_trades_totals.pnl_class }}">{{ admin_griders_trades_totals.total_pnl_text }} USDT</span>
   </div>
 </section>
+
+<details class="panel admin-users-panel">
+  <summary class="admin-users-summary">
+    <div>
+      <h2>{{ "Пользователи" if lang == "ru" else "Users" }}</h2>
+      <p class="muted">{{ "Тарифы, активность и PnL только по подтверждённым сделкам Griders." if lang == "ru" else "Plans, activity, and PnL from confirmed Griders trades only." }}</p>
+    </div>
+    <span class="button tiny admin-users-toggle">{{ "Свернуть / развернуть" if lang == "ru" else "Collapse / expand" }}</span>
+  </summary>
+  <form method="post" action="/profile/admin/users">
+    <div class="form-actions admin-users-filter-actions">
+      <button class="button secondary tiny" type="button" data-toggle-inactive-users>
+        {{ "Скрыть неактивных пользователей" if lang == "ru" else "Hide inactive users" }}
+      </button>
+    </div>
+    <div class="table-wrap">
+      <table class="admin-users-table">
+        <thead>
+          <tr>
+            <th>№</th>
+            <th>e-mail</th>
+            <th>{{ "Ник пользователя" if lang == "ru" else "Nickname" }}</th>
+            <th>{{ "Телеграм" if lang == "ru" else "Telegram" }}</th>
+            <th>{{ "Дата регистрации" if lang == "ru" else "Registration date" }}</th>
+            <th>PNL<br>USDT</th>
+            <th>{{ "Объём 30д" if lang == "ru" else "30d volume" }}<br>USDT</th>
+            <th>{{ "Тариф" if lang == "ru" else "Plan" }}</th>
+            <th>{{ "Реферал" if lang == "ru" else "Referral" }}</th>
+            <th>{{ "Действия" if lang == "ru" else "Actions" }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in admin_users %}
+            <tr data-plan-row data-user-active="{{ '1' if account.connection_status == 'active' else '0' }}">
+              <td data-row-number>{{ loop.index }}</td>
+              <td>
+                <a class="admin-email admin-user-view-link {{ account.connection_status_class }}" href="/admin/users/{{ account.id }}/view" title="{{ 'Открыть профиль пользователя в режиме просмотра' if lang == 'ru' else 'Open user profile in read-only view' }}">{{ account.email }}</a>
+                {% if account.role == "admin" %}<span class="badge">{{ "Админ" if lang == "ru" else "Admin" }}</span>{% endif %}
+              </td>
+              <td>{{ account.nickname or "—" }}</td>
+              <td>
+                {% if account.telegram_username %}
+                  @{{ account.telegram_username }}
+                  {% if account.telegram_user_id %}<span class="badge">ok</span>{% endif %}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>{{ account.created_date_display }}</td>
+              <td><strong class="{{ account.pnl_class }}">{{ account.cumulative_pnl }}</strong></td>
+              <td><strong>{{ account.traded_volume_30d }}</strong></td>
+              <td>
+                <select name="plan_{{ account.id }}" {% if account.role == "admin" %}disabled{% endif %}>
+                  {% for code in base_tariff_codes %}
+                    {% set limits = tariffs[code] %}
+                    <option value="{{ code }}" {% if account.plan == code or (account.role == "admin" and code == "premium") %}selected{% endif %}>
+                      {{ limits.name_ru if lang == "ru" else limits.name_en }}
+                    </option>
+                  {% endfor %}
+                </select>
+                {% if account.role == "admin" %}<input type="hidden" name="plan_{{ account.id }}" value="premium">{% endif %}
+              </td>
+              <td>
+                <label class="checkbox-inline">
+                  <input type="checkbox" name="referral_{{ account.id }}" value="1" {% if account.referral_verified %}checked{% endif %} {% if account.role == "admin" %}disabled{% endif %}>
+                </label>
+              </td>
+              <td>
+                {% if account.role != "admin" and account.id != profile_user.id %}
+                  <button class="button danger tiny" type="submit" formaction="/profile/admin/users/delete" formmethod="post" name="delete_user_id" value="{{ account.id }}" onclick="return confirm('{{ 'Удалить пользователя и все связанные данные?' if lang == 'ru' else 'Delete this user and all related data?' }}')">
+                    {{ "Удалить" if lang == "ru" else "Delete" }}
+                  </button>
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="admin-total-row">
+            <td colspan="5"><strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}</strong></td>
+            <td><strong class="{{ admin_users_totals.pnl_class }}">{{ admin_users_totals.total_pnl_text }}</strong></td>
+            <td><strong>{{ admin_users_totals.traded_volume_30d_text }}</strong></td>
+            <td colspan="3"><strong>{{ "Активных пользователей" if lang == "ru" else "Active users" }}: {{ admin_users_totals.active_users_count }} / {{ admin_users_totals.users_count }}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="form-actions">
+      <button class="button secondary" type="submit" formaction="/profile/admin/users/refresh" formmethod="post">{{ "Обновить статусы" if lang == "ru" else "Refresh statuses" }}</button>
+      <button class="button primary" type="submit">{{ "Сохранить тарифы" if lang == "ru" else "Save plans" }}</button>
+    </div>
+  </form>
+</details>
 
 <script>
 (() => {
@@ -364,18 +413,6 @@
   el("path", { d: path, class: "monitor-pnl-line", fill: "none", stroke: "#0b8f70", "stroke-width": 3, "stroke-linecap": "round", "stroke-linejoin": "round" });
   const crosshair = el("line", { x1: 0, x2: 0, y1: plotTop, y2: barBottom, class: "monitor-crosshair", stroke: "#7b8d96", "stroke-width": 1, "stroke-dasharray": "4 4", hidden: "hidden" });
   const active = el("circle", { cx: 0, cy: 0, r: 7, class: "monitor-active-point", fill: "#1e9be0", stroke: "#ffffff", "stroke-width": 3, hidden: "hidden" });
-  data.forEach((item, index) => {
-    el("circle", {
-      cx: xAt(index),
-      cy: yAt(Number(item.cumulative || 0)),
-      r: 3.8,
-      class: Number(item.pnl || 0) < 0 ? "monitor-point negative-dot" : "monitor-point",
-      fill: "#ffffff",
-      stroke: Number(item.pnl || 0) < 0 ? "#d14b4b" : "#086b54",
-      "stroke-width": 2,
-    });
-  });
-
   const tooltip = root.querySelector(".monitor-tooltip");
   const showAt = (event) => {
     const rect = svg.getBoundingClientRect();

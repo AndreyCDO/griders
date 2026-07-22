@@ -33,6 +33,8 @@
     </div>
   </div>
 </section>
+{% set public_chart_only = true %}
+{% include "partials/public_analytics.html" %}
 <script>
   document.querySelectorAll("[data-external-url]").forEach((link) => {
     link.addEventListener("click", (event) => {

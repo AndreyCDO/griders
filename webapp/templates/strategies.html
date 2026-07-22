@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.strategies.title }} · {{ app_name }}{% endblock %}
-{% block meta_description %}{% if lang == "ru" %}Настройки стратегий Griders: GRID DCA, лимиты сделок, первый ордер, риск, торговые пары и отчёт бэктеста стратегии 2.8.{% else %}Configure Griders strategies: GRID DCA, deal limits, first order size, risk, trading pairs, and the GRID DCA 2.8 backtest report.{% endif %}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Настройки стратегий Griders: GRID DCA, лимиты сделок, первый ордер, риск, торговые пары и отчёт бэктеста стратегии 2.9.{% else %}Configure Griders strategies: GRID DCA, deal limits, first order size, risk, trading pairs, and the GRID DCA 2.9 backtest report.{% endif %}{% endblock %}
 {% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <section class="page-head">
@@ -56,8 +56,8 @@
         <p class="muted">{{ strategy_meta.description }}</p>
         {% if strategy_meta.code == "grid_dca_v2" %}
           <div class="strategy-report-links">
-            <a class="report-link" href="/static/reports/grid-dca-27-year-tariffs-wide-limits.html" target="_blank" rel="noopener">
-              {{ "Бэктест GRID DCA 2.8 для всех тарифов за период 11.06.2025 - 11.06.2026" if lang == "ru" else "GRID DCA 2.8 backtest for all plans for 2025-06-11 - 2026-06-11" }}
+            <a class="report-link" href="/static/reports/grid-dca-29-realistic-live-calibrated.html" target="_blank" rel="noopener">
+              {{ "Реалистичный бэктест GRID DCA 2.9 по всем тарифам с калибровкой по реальной истории" if lang == "ru" else "Realistic GRID DCA 2.9 backtest for all plans calibrated by live history" }}
             </a>
           </div>
         {% endif %}
@@ -208,15 +208,6 @@
         <p class="form-note form-wide plan-limit-note">{{ "На бесплатном тарифе можно выбрать: максимум активных сделок — от 0 до 4, максимум лонг-сделок — от 0 до 4, максимум шорт-сделок — от 0 до 4." if lang == "ru" else "On the free plan you can choose: max active deals from 0 to 4, max long deals from 0 to 4, max short deals from 0 to 4." }}</p>
       {% endif %}
     </div>
-
-    <div class="settings-section" data-watchlist-note {% if strategy.strategy_code not in ["market_shock_impulse_v1", "market_shock_reversal_dca_v21"] %}hidden{% endif %}>
-      <h3>{{ "Торговые пары" if lang == "ru" else "Trading pairs" }}</h3>
-      <p class="form-note">
-        {{ "Для стратегии MarketShok Impulse выбор торговых пар осуществляется системой. Griders автоматически берёт монеты из расширенного списка ликвидных фьючерсов, исключает стейблкоины и рискованные инструменты, а затем обрабатывает только подходящие сигналы Market Shock." if lang == "ru" else "For MarketShok Impulse, trading pairs are selected by the system. Griders automatically uses an expanded universe of liquid futures, excludes stablecoins and risky instruments, then processes only suitable Market Shock signals." }}
-      </p>
-    </div>
-
-    {% if strategy.strategy_code not in ["market_shock_impulse_v1", "market_shock_reversal_dca_v21"] %}
     <div class="settings-section" data-watchlist-section>
       <div class="pair-picker-head">
         <label>{{ ui.strategies.watchlist }}</label>
@@ -244,8 +235,6 @@
         </p>
       {% endif %}
     </div>
-    {% endif %}
-
     <div class="form-actions">
       <button class="button primary" type="submit">{{ ui.strategies.save }}</button>
     </div>
@@ -265,25 +254,15 @@
 
   const strategySelect = document.querySelector("[data-strategy-select]");
   const strategyCards = document.querySelectorAll("[data-strategy-card]");
-  const watchlistSection = document.querySelector("[data-watchlist-section]");
-  const watchlistNote = document.querySelector("[data-watchlist-note]");
   if (strategySelect) {
     const syncStrategyUi = () => {
-      const isMarketShock = ["market_shock_impulse_v1", "market_shock_reversal_dca_v21"].includes(strategySelect.value);
-      const isFreePlan = strategySelect.dataset.freePlan === "1";
       const marketWarning = document.querySelector("[data-market-plan-warning]");
       strategyCards.forEach((card) => {
         card.classList.toggle("active", card.dataset.strategyCard === strategySelect.value);
       });
-      strategySelect.classList.toggle("plan-locked-select", isFreePlan && isMarketShock);
+      strategySelect.classList.remove("plan-locked-select");
       if (marketWarning) {
-        marketWarning.hidden = !(isFreePlan && isMarketShock);
-      }
-      if (watchlistSection) {
-        watchlistSection.hidden = isMarketShock;
-      }
-      if (watchlistNote) {
-        watchlistNote.hidden = !isMarketShock;
+        marketWarning.hidden = true;
       }
     };
     strategySelect.addEventListener("change", syncStrategyUi);

@@ -33,6 +33,9 @@
         <strong>{{ item.label }}</strong>
         <span>{{ item.strategy_name }}</span>
         <small>{{ item.api_key_masked or ui.common.not_set }}</small>
+        {% if item.is_pending_approval %}
+          <small class="badge warning">{{ "Ожидает одобрения" if lang == "ru" else "Pending approval" }}</small>
+        {% endif %}
       </a>
     {% endfor %}
   {% endif %}
@@ -53,6 +56,11 @@
       <a class="button secondary" href="/connections?new=1">{{ ui.connections.add_new }}</a>
     {% endif %}
   </div>
+  {% if connection and connection.is_pending_approval %}
+    <p class="alert warning">
+      {{ "Подключение создано. Для запуска подключения отправьте администратору скриншот из Cryptorg, где видно API ключ и почту вашего аккаунта." if lang == "ru" else "Connection created. To launch it, send the administrator a Cryptorg screenshot showing the API key and your account email." }}
+    </p>
+  {% endif %}
   <form class="form-grid {% if connection_locked %}locked-form{% endif %}" method="post" action="/connections" autocomplete="off" data-connection-form data-connection-locked="{{ 1 if connection_locked else 0 }}">
     <input type="hidden" name="connection_id" value="{{ connection.id if connection else 0 }}">
     <label>{{ ui.connections.label }}
@@ -164,12 +172,10 @@
   const connectionStrategySelect = document.querySelector("[data-connection-strategy-select]");
   if (connectionStrategySelect) {
     const syncConnectionPlanWarning = () => {
-      const isFreePlan = connectionStrategySelect.dataset.freePlan === "1";
-      const isMarketShock = ["market_shock_impulse_v1", "market_shock_reversal_dca_v21"].includes(connectionStrategySelect.value);
       const warning = document.querySelector("[data-connection-market-warning]");
-      connectionStrategySelect.classList.toggle("plan-locked-select", isFreePlan && isMarketShock);
+      connectionStrategySelect.classList.remove("plan-locked-select");
       if (warning) {
-        warning.hidden = !(isFreePlan && isMarketShock);
+        warning.hidden = true;
       }
     };
     connectionStrategySelect.addEventListener("change", syncConnectionPlanWarning);

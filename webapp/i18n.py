@@ -110,8 +110,8 @@ UI = {
         "strategies": {
             "eyebrow": "Алгоритмы",
             "title": "Стратегии",
-            "strategy_name": "GRID DCA 2.8",
-            "strategy_description": "Стратегия определяет состояние рынка и открывает гоуст-бота Cryptorg с адаптивной сеткой усреднения, тейк-профитом и стоп-лоссом.",
+            "strategy_name": "GRID DCA 2.9",
+            "strategy_description": "Стратегия определяет состояние рынка и открывает гоуст-бота Cryptorg с адаптивной сеткой усреднения, тейк-профитом по стадии рынка и расширенным стоп-лоссом.",
             "connection": "Подключение",
             "strategy_choice": "Стратегия для подключения",
             "enable_monitoring": "Включить мониторинг",
@@ -259,8 +259,8 @@ UI = {
         "strategies": {
             "eyebrow": "Algorithms",
             "title": "Strategies",
-            "strategy_name": "GRID DCA 2.8",
-            "strategy_description": "Market-stage strategy that opens Cryptorg Ghost Bot deals with an ATR-adaptive DCA grid, take profit and stop loss.",
+            "strategy_name": "GRID DCA 2.9",
+            "strategy_description": "Market-stage strategy that opens Cryptorg Ghost Bot deals with an ATR-adaptive DCA grid, stage-dependent take profit and wider stop loss.",
             "connection": "Connection",
             "strategy_choice": "Connection strategy",
             "enable_monitoring": "Enable monitoring",

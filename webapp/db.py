@@ -92,6 +92,7 @@ def init_db() -> None:
             telegram_last_checked_at TIMESTAMP NULL,
             role ENUM('admin','user') NOT NULL DEFAULT 'user',
             plan ENUM('free','free_plus','start','start_plus','premium','premium_plus') NOT NULL DEFAULT 'free',
+            free_plan_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             referral_verified TINYINT(1) NOT NULL DEFAULT 0,
             password_hash VARCHAR(255) NOT NULL,
             twofa_method ENUM('none','pin','totp') NOT NULL DEFAULT 'none',
@@ -129,6 +130,8 @@ def init_db() -> None:
             bybit_api_secret_encrypted TEXT NULL,
             webhook_url_encrypted TEXT NULL,
             is_active TINYINT(1) NOT NULL DEFAULT 1,
+            approval_status ENUM('approved','pending') NOT NULL DEFAULT 'approved',
+            approved_at TIMESTAMP NULL,
             last_balance DECIMAL(18, 8) NULL,
             last_error TEXT NULL,
             last_checked_at TIMESTAMP NULL,
@@ -226,35 +229,6 @@ def init_db() -> None:
             INDEX idx_email_verify_user (user_id, created_at),
             INDEX idx_email_verify_expires (expires_at),
             CONSTRAINT fk_ai_email_verify_user FOREIGN KEY (user_id) REFERENCES ai_users(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS ai_market_shock_events (
-            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            source VARCHAR(40) NOT NULL,
-            source_message_id VARCHAR(80) NOT NULL,
-            pair VARCHAR(40) NOT NULL,
-            side ENUM('long','short') NOT NULL,
-            move_pct DECIMAL(10, 4) NOT NULL DEFAULT 0.0000,
-            shock_type VARCHAR(20) NOT NULL DEFAULT '',
-            raw_text TEXT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            processed_at TIMESTAMP NULL,
-            UNIQUE KEY uniq_market_shock_source (source, source_message_id),
-            INDEX idx_market_shock_created (created_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS ai_market_shock_pair_lists (
-            pair VARCHAR(40) PRIMARY KEY,
-            list_type ENUM('white','black') NOT NULL,
-            reason TEXT NULL,
-            metrics JSON NULL,
-            source_event_id BIGINT UNSIGNED NULL,
-            checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_market_shock_pair_list_type (list_type, checked_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
@@ -467,11 +441,39 @@ def init_db() -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
+        CREATE TABLE IF NOT EXISTS ai_public_cache (
+            cache_key VARCHAR(120) PRIMARY KEY,
+            cache_value MEDIUMTEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ai_admin_side_blocks (
+            side ENUM('long','short') PRIMARY KEY,
+            blocked_until TIMESTAMP NULL,
+            created_by BIGINT UNSIGNED NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_admin_side_blocks_until (blocked_until)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
         CREATE TABLE IF NOT EXISTS ai_tariff_channels (
             plan ENUM('start','premium') PRIMARY KEY,
             chat_id VARCHAR(80) NOT NULL,
             title VARCHAR(190) NOT NULL DEFAULT '',
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ai_monitoring_preferences (
+            user_id BIGINT UNSIGNED NOT NULL,
+            connection_id BIGINT UNSIGNED NOT NULL,
+            start_date DATE NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, connection_id),
+            CONSTRAINT fk_ai_monitoring_pref_user FOREIGN KEY (user_id) REFERENCES ai_users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_ai_monitoring_pref_connection FOREIGN KEY (connection_id) REFERENCES ai_user_connections(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
     ]
@@ -495,6 +497,8 @@ def init_db() -> None:
             _ensure_column(cur, "ai_users", "role", "ENUM('admin','user') NOT NULL DEFAULT 'user'")
             _ensure_column(cur, "ai_users", "plan", "ENUM('free','free_plus','start','start_plus','premium','premium_plus') NOT NULL DEFAULT 'free'")
             cur.execute("ALTER TABLE ai_users MODIFY plan ENUM('free','free_plus','start','start_plus','premium','premium_plus') NOT NULL DEFAULT 'free'")
+            _ensure_column(cur, "ai_users", "free_plan_started_at", "TIMESTAMP NULL")
+            cur.execute("UPDATE ai_users SET free_plan_started_at=NOW() WHERE free_plan_started_at IS NULL")
             _ensure_column(cur, "ai_users", "referral_verified", "TINYINT(1) NOT NULL DEFAULT 0")
             cur.execute(
                 """
@@ -523,9 +527,14 @@ def init_db() -> None:
             _ensure_column(cur, "ai_user_admin_stats", "closed_trades_count", "BIGINT UNSIGNED NOT NULL DEFAULT 0")
             _ensure_column(cur, "ai_user_admin_stats", "closed_entry_volume", "DECIMAL(24, 8) NOT NULL DEFAULT 0.00000000")
             _ensure_column(cur, "ai_user_connections", "last_admin_closed_sync_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_user_connections", "approval_status", "ENUM('approved','pending') NOT NULL DEFAULT 'approved'")
+            _ensure_column(cur, "ai_user_connections", "approved_at", "TIMESTAMP NULL")
             _ensure_column(cur, "ai_user_connections", "last_positions_snapshot", "JSON NULL")
             _ensure_column(cur, "ai_user_connections", "last_positions_checked_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_user_connections", "last_open_orders_snapshot", "JSON NULL")
+            _ensure_column(cur, "ai_user_connections", "last_open_orders_checked_at", "TIMESTAMP NULL")
             _ensure_column(cur, "ai_user_connections", "last_risk_pause_reason", "TEXT NULL")
+            _ensure_column(cur, "ai_user_connections", "last_risk_pause_snapshot", "JSON NULL")
             _ensure_column(cur, "ai_user_connections", "last_risk_pause_checked_at", "TIMESTAMP NULL")
             _ensure_column(cur, "ai_site_trade_deals", "active_safety_orders", "INT NOT NULL DEFAULT 0")
             cur.execute("ALTER TABLE ai_site_trade_deals MODIFY status ENUM('open','closed','canceled') NOT NULL DEFAULT 'open'")

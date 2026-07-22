@@ -1,0 +1,92 @@
+﻿<section class="public-analytics {{ 'chart-only' if public_chart_only else '' }}">
+  {% if not public_chart_only %}
+    <section class="panel admin-site-stats public-site-stats">
+      <h2>{{ "Итоги по сайту" if lang == "ru" else "Site totals" }}</h2>
+      <p class="form-note">{{ "Расчёт ведётся с 08.06.2026." if lang == "ru" else "Calculated from 2026-06-08." }}</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ "Пользователей" if lang == "ru" else "Users" }}</th>
+              <th>{{ "Активных пользователей" if lang == "ru" else "Active users" }}</th>
+              <th>{{ "Сделок" if lang == "ru" else "Deals" }}</th>
+              <th>{{ "Объём" if lang == "ru" else "Volume" }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>{{ public_site_stats.users_count }}</strong></td>
+              <td><strong>{{ public_site_stats.active_users_count }}</strong></td>
+              <td><strong>{{ public_site_stats.deals_count }}</strong></td>
+              <td><strong>{{ public_site_stats.traded_volume }} USDT</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {% if public_trade_analysis %}
+    <section class="panel admin-trade-analysis public-trade-analysis">
+      <h2>{{ "Анализ результатов сделок" if lang == "ru" else "Trade Outcome Analysis" }}</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ "Стратегия" if lang == "ru" else "Strategy" }}</th>
+              <th>{{ "Сторона" if lang == "ru" else "Side" }}</th>
+              <th>{{ "Закрытие" if lang == "ru" else "Close" }}</th>
+              <th>{{ "Сделок" if lang == "ru" else "Deals" }}</th>
+              <th>{{ "Суммарный PnL" if lang == "ru" else "Total PnL" }}</th>
+              <th>{{ "Средний PnL" if lang == "ru" else "Avg PnL" }}</th>
+              <th>{{ "Средний ROI" if lang == "ru" else "Avg ROI" }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in public_trade_analysis %}
+              <tr>
+                <td><strong>{{ row.strategy_code }}</strong></td>
+                <td><span class="side {{ row.side }}">{{ row.side_label if lang == "ru" else row.side }}</span></td>
+                <td>{{ row.close_reason_label if lang == "ru" else row.close_reason }}</td>
+                <td>{{ row.trades_count }}</td>
+                <td><strong class="{{ row.pnl_class }}">{{ row.total_pnl_text }} USDT</strong></td>
+                <td>{{ row.avg_pnl_text }} USDT</td>
+                <td>{{ row.avg_roi_text }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="admin-total-row">
+              <td colspan="3"><strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}</strong></td>
+              <td><strong>{{ public_trade_analysis_totals.trades_count }}</strong></td>
+              <td><strong class="{{ public_trade_analysis_totals.pnl_class }}">{{ public_trade_analysis_totals.total_pnl_text }} USDT</strong></td>
+              <td>{{ public_trade_analysis_totals.avg_pnl_text }} USDT</td>
+              <td>{{ public_trade_analysis_totals.avg_roi_text }}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+  {% endif %}
+
+  <section class="panel admin-griders-trades public-griders-trades">
+    <div class="panel-heading-row">
+      <div>
+        <h2>{{ "Все подтверждённые сделки Griders" if lang == "ru" else "All Confirmed Griders Trades" }}</h2>
+        <p class="form-note">{{ "График закрытых подтверждённых сделок Griders всех пользователей с 07.06.2026." if lang == "ru" else "Chart of all users' confirmed closed Griders trades since 2026-06-07." }}</p>
+      </div>
+    </div>
+    <div class="monitor-chart-card admin-griders-chart-card" data-griders-chart data-empty="{{ 'Нет подтверждённых сделок Griders' if lang == 'ru' else 'No confirmed Griders trades' }}">
+      <script type="application/json" data-griders-chart-data>{{ public_griders_trades_chart_json|safe }}</script>
+      <svg class="monitor-svg admin-griders-svg" viewBox="0 0 920 360" role="img" aria-label="{{ 'График PnL подтверждённых сделок Griders' if lang == 'ru' else 'Confirmed Griders trades PnL chart' }}"></svg>
+      <div class="monitor-tooltip" hidden></div>
+    </div>
+    <div class="admin-griders-summary">
+      <strong>{{ "ИТОГО" if lang == "ru" else "TOTAL" }}:</strong>
+      <span>{{ public_griders_trades_totals.trades_count }} {{ "сделок" if lang == "ru" else "trades" }}</span>
+      <span class="{{ public_griders_trades_totals.pnl_class }}">{{ public_griders_trades_totals.total_pnl_text }} USDT</span>
+    </div>
+  </section>
+</section>
+
+{% include "partials/griders_chart_script.html" %}

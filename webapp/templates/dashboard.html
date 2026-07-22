@@ -28,14 +28,14 @@
   {% for item in unprotected_positions %}
     <section class="risk-alert unmanaged-position-alert">
       <div>
-        <strong>{{ "Внимание: открытая позиция без закрывающих ордеров" if lang == "ru" else "Warning: open position without closing orders" }}</strong>
+        <strong>{{ "Внимание: возможно открыта позиция без закрывающих ордеров" if lang == "ru" else "Warning: possible open position without closing orders" }}</strong>
         <p>
           {% if lang == "ru" %}
-            По паре <b>{{ item.pair }}</b> открыта позиция {{ item.side_label }} в подключении <b>{{ item.connection_label }}</b>.
-            Griders не управляет этой позицией: по ней не найден тейк-профит или другой закрывающий ордер.
+            По паре <b>{{ item.pair }}</b> возможно открыта позиция {{ item.side_label }} в подключении <b>{{ item.connection_label }}</b> без закрывающих ордеров.
+            Griders не нашёл тейк-профит или другой закрывающий ордер в последнем снимке данных.
           {% else %}
-            There is an open {{ item.side_label }} position on <b>{{ item.pair }}</b> in <b>{{ item.connection_label }}</b>.
-            Griders does not manage this position: no take-profit or other closing order was found.
+            There may be an open {{ item.side_label }} position on <b>{{ item.pair }}</b> in <b>{{ item.connection_label }}</b> without closing orders.
+            Griders did not find a take-profit or another closing order in the latest account snapshot.
           {% endif %}
         </p>
         <p>
@@ -46,7 +46,7 @@
           {% endif %}
         </p>
         <p>
-          <b>{{ "Необходимо зайти в Cryptorg и закрыть эту позицию вручную." if lang == "ru" else "Please open Cryptorg and close this position manually." }}</b>
+          <b>{{ "Зайдите в Cryptorg и проверьте эту позицию. Если закрывающих ордеров и сетки DCA действительно нет, позицию необходимо закрыть вручную." if lang == "ru" else "Please open Cryptorg and check this position. If there are truly no closing orders and no DCA grid, close the position manually." }}</b>
         </p>
       </div>
       <a class="button danger" href="/monitoring?connection_id={{ item.connection_id }}">{{ "Открыть мониторинг" if lang == "ru" else "Open monitoring" }}</a>
@@ -121,9 +121,6 @@
   <div class="panel">
     <h2>{{ strategy_meta.name }}</h2>
     <p class="muted">{{ strategy_meta.description }}</p>
-    {% if strategy_meta.code in ["market_shock_impulse_v1", "market_shock_reversal_dca_v21"] %}
-      <p class="form-note">{{ "Список монет для этой стратегии управляется системой: Griders берёт сигналы Market Shock, фильтрует слабую ликвидность и рискованные инструменты, а пользователю оставляет только параметры риска и автоторговли." if lang == "ru" else "The coin universe for this strategy is managed by the system: Griders reads Market Shock signals, filters weak liquidity and risky instruments, and leaves risk and auto-trading settings to the user." }}</p>
-    {% else %}
     <div class="data-list">
       <div class="data-list-stack">
         <span>{{ ui.dashboard.pairs }}</span>
@@ -136,16 +133,10 @@
       <div><span>{{ ui.dashboard.min_volume }}</span><strong>{{ strategy.min_order_volume }} USDT</strong></div>
       <div><span>{{ ui.dashboard.leverage }}</span><strong>x{{ strategy.leverage }}</strong></div>
     </div>
-    {% endif %}
     <a class="button secondary" href="/strategies">{{ ui.common.configure }}</a>
   </div>
 </section>
 
-<section class="panel">
-  <div class="section-head">
-    <h2>{{ ui.dashboard.latest_signals }}</h2>
-    <a href="/signals">{{ ui.common.all_signals }}</a>
-  </div>
-  {% include "partials/signals_table.html" %}
-</section>
+{% set public_chart_only = false %}
+{% include "partials/public_analytics.html" %}
 {% endblock %}

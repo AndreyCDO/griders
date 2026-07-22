@@ -18,11 +18,12 @@ from .db import execute, fetch_all, fetch_one
 from .launch_guard import release_pair_launch, release_strategy_side_launch, reserve_pair_launch, reserve_strategy_side_launch
 from .security import decrypt_secret
 from .trade_stats import record_sent_webhook
+from .trading_controls import active_side_block
 
 
 logger = logging.getLogger(__name__)
 DEFAULT_STRATEGY_CODE = "grid_dca_v2"
-GRID_DCA_STRATEGY_CODES = {"grid_dca_v2", "grid_dca_v3"}
+GRID_DCA_STRATEGY_CODES = {"grid_dca_v2"}
 GRID_DCA_TAKE_PROFIT_MULTIPLIER = 1.0
 TRADINGVIEW_EVENT_PROCESSING_TIMEOUT_MINUTES = 10
 TRADINGVIEW_EVENT_MAX_AGE_MINUTES = 15
@@ -41,6 +42,15 @@ def enqueue_tradingview_grid_dca(payload: dict) -> dict:
     event = parse_tradingview_payload(payload)
     if not event:
         return {"ok": True, "queued": False, "processed": False, "reason": "not a grid dca signal"}
+    side_block = active_side_block(event["side"])
+    if side_block:
+        return {
+            "ok": True,
+            "queued": False,
+            "processed": False,
+            "reason": f"global_{event['side']}_block",
+            "blocked_until": str(side_block.get("blocked_until") or ""),
+        }
     source_message_id = _source_message_id(payload, event)
     existing = fetch_one(
         "SELECT id, processed_at FROM ai_tradingview_events WHERE source=%s AND source_message_id=%s",
@@ -102,6 +112,18 @@ async def process_tradingview_grid_dca_event(event_id: int) -> dict:
                 (event_id,),
             )
             return {"ok": True, "processed": False, "reason": "not a grid dca signal", "event_id": event_id}
+        side_block = active_side_block(event["side"])
+        if side_block:
+            execute(
+                "UPDATE ai_tradingview_events SET processed_at=NOW(), processing_error=%s WHERE id=%s",
+                (f"global {event['side']} block is active", event_id),
+            )
+            return {
+                "ok": True,
+                "processed": False,
+                "reason": f"global_{event['side']}_block",
+                "event_id": event_id,
+            }
         event["received_at"] = row.get("created_at")
         created = await create_grid_dca_signals(event, event_id)
         execute(
@@ -239,7 +261,8 @@ async def create_grid_dca_signals(event: dict, event_id: int) -> int:
     strategy_code = event.get("strategy_code") or DEFAULT_STRATEGY_CODE
     rows = fetch_all(
         """
-        SELECT s.*, u.role, u.plan, COALESCE(u.referral_verified, 0) AS referral_verified,
+        SELECT s.*, u.role, u.plan, u.free_plan_started_at, u.created_at AS user_created_at,
+               COALESCE(u.referral_verified, 0) AS referral_verified,
                c.id AS connection_id,
                c.bybit_api_key,
                c.bybit_api_secret_encrypted,
@@ -251,10 +274,17 @@ async def create_grid_dca_signals(event: dict, event_id: int) -> int:
                c.last_risk_pause_reason,
                c.last_risk_pause_checked_at
         FROM ai_user_strategy_settings s
-        JOIN ai_user_connections c ON c.id = s.connection_id AND c.is_active = 1
+        JOIN ai_user_connections c ON c.id = s.connection_id
+          AND c.is_active = 1
+          AND COALESCE(c.approval_status, 'approved') = 'approved'
         JOIN ai_users u ON u.id = s.user_id
         WHERE s.enabled = 1 AND s.auto_trade = 1 AND s.strategy_code = %s
-          AND (s.strategy_code <> 'grid_dca_v3' OR u.role = 'admin')
+          AND NOT (
+              u.role <> 'admin'
+              AND u.plan = 'free'
+              AND COALESCE(u.referral_verified, 0) = 0
+              AND COALESCE(u.free_plan_started_at, u.created_at) <= DATE_SUB(NOW(), INTERVAL 14 DAY)
+          )
         """,
         (strategy_code,),
     )
@@ -814,17 +844,21 @@ def _signal_exists_for_event(user_id: int, connection_id: int | None, strategy_c
 def _grid_from_event(event: dict) -> dict:
     stage = event["market_stage"] if event["market_stage"] in {"range", "trend", "pullback"} else "range"
     presets = {
-        "range": {"dca_max": 4, "dca_active": 3, "mult_vol": "1.15", "mult_price": "1.05", "min_step": 0.45, "max_step": 1.8, "min_tp": 0.35, "max_tp": 0.75, "min_stop": 3.0, "max_stop": 6.0},
-        "trend": {"dca_max": 3, "dca_active": 2, "mult_vol": "1.2", "mult_price": "1.15", "min_step": 0.75, "max_step": 2.4, "min_tp": 0.45, "max_tp": 1.0, "min_stop": 3.0, "max_stop": 6.5},
-        "pullback": {"dca_max": 5, "dca_active": 3, "mult_vol": "1.2", "mult_price": "1.1", "min_step": 0.55, "max_step": 2.0, "min_tp": 0.4, "max_tp": 0.85, "min_stop": 3.5, "max_stop": 6.5},
+        "range": {"dca_max": 4, "dca_active": 3, "mult_vol": "1.15", "mult_price": "1.05", "atr_step_mult": 0.85, "min_step": 0.45, "max_step": 1.8, "min_tp": 0.35, "max_tp": 0.75, "tp_multiplier": 1.0, "min_stop": 3.0, "max_stop": 6.0, "sl_multiplier": 1.3},
+        "trend": {"dca_max": 3, "dca_active": 2, "mult_vol": "1.2", "mult_price": "1.15", "atr_step_mult": 1.1, "min_step": 0.75, "max_step": 2.4, "min_tp": 0.45, "max_tp": 1.0, "tp_multiplier": 1.15, "min_stop": 3.0, "max_stop": 6.5, "sl_multiplier": 1.3},
+        "pullback": {"dca_max": 5, "dca_active": 3, "mult_vol": "1.2", "mult_price": "1.1", "atr_step_mult": 0.75, "min_step": 0.55, "max_step": 2.0, "min_tp": 0.4, "max_tp": 0.85, "tp_multiplier": 1.2, "min_stop": 3.5, "max_stop": 6.5, "sl_multiplier": 1.3},
     }
     preset = presets[stage]
-    step = event["dca_percent"] or _clamp(event["atr_pct"] * 0.85, preset["min_step"], preset["max_step"])
-    take_profit = event["take_profit"] or _clamp(step * 0.55, preset["min_tp"], preset["max_tp"])
-    if not event.get("take_profit_adjusted"):
-        take_profit *= GRID_DCA_TAKE_PROFIT_MULTIPLIER
+    step = event["dca_percent"] or _clamp(event["atr_pct"] * preset["atr_step_mult"], preset["min_step"], preset["max_step"])
+    if event["take_profit"]:
+        take_profit = event["take_profit"]
+        if not event.get("take_profit_adjusted"):
+            take_profit *= GRID_DCA_TAKE_PROFIT_MULTIPLIER
+    else:
+        base_take_profit = _clamp(step * 0.55, preset["min_tp"], preset["max_tp"])
+        take_profit = min(1.0, base_take_profit * preset["tp_multiplier"])
     coverage = _grid_coverage(step, preset["dca_active"], float(preset["mult_price"]))
-    stop_loss = event["stop_loss"] or _clamp(coverage * 1.25, preset["min_stop"], preset["max_stop"])
+    stop_loss = event["stop_loss"] or (_clamp(coverage * 1.25, preset["min_stop"], preset["max_stop"]) * preset["sl_multiplier"])
     return {
         "dca_max": preset["dca_max"],
         "dca_active": preset["dca_active"],
@@ -1187,17 +1221,17 @@ def _global_pair_stop_guard_reason(event: dict) -> str | None:
         return None
     return (
         f"системная пауза GRID DCA: по {event['pair']} {event['side']} был пробой сетки; "
-        "новые входы по этой паре временно остановлены"
+        f"новые входы по этой паре в направлении {event['side']} временно остановлены"
     )
 
 
 def _grid_dca_guard_reason(event: dict) -> str | None:
     strategy_code = event.get("strategy_code") or DEFAULT_STRATEGY_CODE
-    label = "GRID DCA 3.1" if strategy_code == "grid_dca_v3" else "GRID DCA 2.8"
-    macro_1 = 0.55 if strategy_code == "grid_dca_v3" else 0.8
-    macro_3 = 0.9 if strategy_code == "grid_dca_v3" else 1.2
-    adverse_candle = 0.5 if strategy_code == "grid_dca_v3" else 0.7
-    adverse_volume = 1.2 if strategy_code == "grid_dca_v3" else 1.4
+    label = "GRID DCA 2.9"
+    macro_1 = 0.8
+    macro_3 = 1.2
+    adverse_candle = 0.7
+    adverse_volume = 1.4
     side = event["side"]
     bb_position = float(event.get("bb_position") or 50)
     volume_ratio = float(event.get("volume_ratio") or 1)

@@ -1,0 +1,136 @@
+﻿<script>
+(() => {
+  const roots = Array.from(document.querySelectorAll("[data-griders-chart]")).filter((root) => !root.dataset.chartReady);
+  if (!roots.length) return;
+  roots.forEach((root) => {
+    root.dataset.chartReady = "1";
+    const svg = root.querySelector(".admin-griders-svg");
+    const source = root.querySelector("[data-griders-chart-data]");
+    if (!svg || !source) return;
+    const labels = {
+      dayPnl: {{ ("PnL за день" if lang == "ru" else "Daily PnL")|tojson }},
+      cumulative: {{ ("PnL кумулятивный" if lang == "ru" else "Cumulative PnL")|tojson }},
+      trades: {{ ("Сделок" if lang == "ru" else "Trades")|tojson }},
+      noData: root.dataset.empty || "No data",
+    };
+    let data = [];
+    try { data = JSON.parse(source.textContent || "[]"); } catch (_) { data = []; }
+    const width = 920;
+    const height = 360;
+    const margin = { top: 22, right: 28, bottom: 48, left: 112 };
+    const plotTop = 8;
+    const plotBottom = 280;
+    const barTop = 294;
+    const barBottom = height - margin.bottom;
+    const plotWidth = width - margin.left - margin.right;
+    const ns = "http://www.w3.org/2000/svg";
+    const el = (name, attrs = {}) => {
+      const node = document.createElementNS(ns, name);
+      Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+      svg.appendChild(node);
+      return node;
+    };
+    const formatMoney = (value) => `${Number(value || 0).toFixed(2)} USDT`;
+    const formatAxisNumber = (value) => {
+      const num = Number(value || 0);
+      if (Math.abs(num - Math.round(num)) < 0.000001) return String(Math.round(num));
+      return num.toFixed(Math.abs(num) >= 1 ? 1 : 2);
+    };
+    const niceStep = (range, targetTicks = 5) => {
+      const rough = Math.max(0.000001, range / Math.max(1, targetTicks - 1));
+      const power = 10 ** Math.floor(Math.log10(rough));
+      const fraction = rough / power;
+      const niceFraction = fraction <= 1 ? 1 : (fraction <= 2 ? 2 : (fraction <= 5 ? 5 : 10));
+      return niceFraction * power;
+    };
+    const niceTicks = (min, max, targetTicks = 5) => {
+      const step = niceStep(max - min, targetTicks);
+      const start = Math.floor(min / step) * step;
+      const end = Math.ceil(max / step) * step;
+      const ticks = [];
+      for (let value = start; value <= end + step * 0.5; value += step) ticks.push(Number(value.toFixed(10)));
+      return { ticks, min: start, max: end };
+    };
+    const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+    }[ch]));
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    if (!data.length) {
+      el("text", { x: width / 2, y: height / 2, "text-anchor": "middle", class: "monitor-empty-label", fill: "#667680" }).textContent = labels.noData;
+      return;
+    }
+    const cumulatives = data.map((item) => Number(item.cumulative || 0));
+    const trades = data.map((item) => Number(item.trades || 0));
+    let minY = Math.min(0, ...cumulatives);
+    let maxY = Math.max(0, ...cumulatives);
+    if (minY === maxY) { minY -= 1; maxY += 1; }
+    const pad = (maxY - minY) * 0.14;
+    minY -= pad;
+    maxY += pad;
+    const axis = niceTicks(minY, maxY, 7);
+    minY = axis.min;
+    maxY = axis.max;
+    const maxTrades = Math.max(1, ...trades);
+    const xAt = (index) => margin.left + (data.length === 1 ? plotWidth / 2 : (index / (data.length - 1)) * plotWidth);
+    const yAt = (value) => plotBottom - ((value - minY) / (maxY - minY)) * (plotBottom - plotTop);
+    const barHeight = (value) => (value / maxTrades) * (barBottom - barTop);
+
+    el("rect", { x: 0, y: 0, width, height, rx: 10, class: "monitor-chart-bg", fill: "#fbfdfc" });
+    axis.ticks.forEach((value) => {
+      const y = yAt(value);
+      el("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, class: "monitor-grid-line", stroke: "#dfe8e4", "stroke-width": 1 });
+      el("text", { x: margin.left - 18, y: y + 4, "text-anchor": "end", class: "monitor-axis-label", fill: "#667680" }).textContent = formatAxisNumber(value);
+    });
+    const startY = yAt(0);
+    el("line", { x1: margin.left - 8, x2: width - margin.right, y1: startY, y2: startY, class: "monitor-start-line", stroke: "#99a7ad", "stroke-width": 1, "stroke-dasharray": "3 5", opacity: "0.8" });
+    el("line", { x1: margin.left, x2: width - margin.right, y1: barBottom, y2: barBottom, class: "monitor-axis-line", stroke: "#cbd9d4", "stroke-width": 1 });
+    el("text", { x: margin.left - 18, y: barTop + 18, "text-anchor": "end", class: "monitor-axis-label", fill: "#667680" }).textContent = labels.trades;
+
+    const tickStep = Math.max(1, Math.ceil(data.length / 8));
+    data.forEach((item, index) => {
+      const x = xAt(index);
+      if (index % tickStep === 0 || index === data.length - 1) {
+        el("text", { x, y: height - 18, "text-anchor": "middle", class: "monitor-axis-label", fill: "#667680" }).textContent = item.label;
+      }
+      const h = barHeight(Number(item.trades || 0));
+      el("rect", { x: x - 4, y: barBottom - h, width: 8, height: h, rx: 2, class: "monitor-trade-bar", fill: "#3b78a8", opacity: "0.42" });
+    });
+    const path = data.map((item, index) => `${index ? "L" : "M"} ${xAt(index).toFixed(2)} ${yAt(Number(item.cumulative || 0)).toFixed(2)}`).join(" ");
+    el("path", { d: path, class: "monitor-pnl-line", fill: "none", stroke: "#0b8f70", "stroke-width": 3, "stroke-linecap": "round", "stroke-linejoin": "round" });
+    const crosshair = el("line", { x1: 0, x2: 0, y1: plotTop, y2: barBottom, class: "monitor-crosshair", stroke: "#7b8d96", "stroke-width": 1, "stroke-dasharray": "4 4", hidden: "hidden" });
+    const active = el("circle", { cx: 0, cy: 0, r: 7, class: "monitor-active-point", fill: "#1e9be0", stroke: "#ffffff", "stroke-width": 3, hidden: "hidden" });
+    const tooltip = root.querySelector(".monitor-tooltip");
+    const showAt = (event) => {
+      const rect = svg.getBoundingClientRect();
+      const scaleX = width / rect.width;
+      const mouseX = (event.clientX - rect.left) * scaleX;
+      let nearest = 0;
+      let best = Infinity;
+      data.forEach((_, index) => {
+        const dist = Math.abs(xAt(index) - mouseX);
+        if (dist < best) { best = dist; nearest = index; }
+      });
+      const item = data[nearest];
+      const x = xAt(nearest);
+      const y = yAt(Number(item.cumulative || 0));
+      crosshair.removeAttribute("hidden");
+      active.removeAttribute("hidden");
+      crosshair.setAttribute("x1", x);
+      crosshair.setAttribute("x2", x);
+      active.setAttribute("cx", x);
+      active.setAttribute("cy", y);
+      tooltip.hidden = false;
+      tooltip.innerHTML = `<strong>${escapeHtml(item.date)}</strong><span>${labels.dayPnl}: ${escapeHtml(item.pnlText || formatMoney(item.pnl))}</span><span>${labels.cumulative}: ${escapeHtml(item.cumulativeText || formatMoney(item.cumulative))}</span><span>${labels.trades}: ${escapeHtml(item.trades)}</span>`;
+      tooltip.style.left = `${Math.min(rect.width - 220, Math.max(12, (x / width) * rect.width + 12))}px`;
+      tooltip.style.top = `${Math.min(rect.height - 112, Math.max(10, (y / height) * rect.height - 58))}px`;
+    };
+    const hide = () => {
+      crosshair.setAttribute("hidden", "hidden");
+      active.setAttribute("hidden", "hidden");
+      tooltip.hidden = true;
+    };
+    svg.addEventListener("pointermove", showAt);
+    svg.addEventListener("pointerleave", hide);
+  });
+})();
+</script>

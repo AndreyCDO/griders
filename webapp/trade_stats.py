@@ -19,16 +19,33 @@ REPORT_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 def site_totals() -> dict:
     users_row = fetch_one("SELECT COUNT(*) AS users_count FROM ai_users") or {}
+    active_users_row = fetch_one(
+        """
+        SELECT COUNT(*) AS active_users_count
+        FROM ai_user_admin_stats
+        WHERE connection_status='active'
+        """
+    ) or {}
     deals_row = fetch_one(
         """
         SELECT COUNT(*) AS deals_count,
-               COALESCE(SUM(credited_volume), 0) AS traded_volume
+               COALESCE(SUM(
+                   COALESCE(api_entry_value, 0)
+                   + CASE
+                       WHEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0)) > 0
+                         THEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0))
+                       WHEN COALESCE(api_entry_value, 0) > 0
+                         THEN COALESCE(api_entry_value, 0)
+                       ELSE 0
+                     END
+               ), 0) AS traded_volume
         FROM ai_site_trade_deals
         WHERE status='closed' AND closed_at IS NOT NULL
         """
     ) or {}
     return {
         "users_count": int(users_row.get("users_count") or 0),
+        "active_users_count": int(active_users_row.get("active_users_count") or 0),
         "deals_count": int(deals_row.get("deals_count") or 0),
         "traded_volume": _float(deals_row.get("traded_volume")),
         "counted_from": COUNTER_START_DATE,
@@ -174,12 +191,19 @@ def process_closed_rows_for_counter(user_id: int, connection_id: int | None, clo
               AND connection_id <=> %s
               AND pair=%s
               AND side=%s
-              AND status='open'
+              AND (
+                  status='open'
+                  OR (status='canceled' AND close_order_type='phantom_open_cleanup' AND closed_at IS NULL)
+              )
+              AND sent_at >= DATE_SUB(%s, INTERVAL 14 DAY)
               AND sent_at <= %s
-            ORDER BY sent_at ASC, id ASC
+            ORDER BY
+                CASE WHEN status='open' THEN 0 ELSE 1 END,
+                sent_at DESC,
+                id DESC
             LIMIT 1
             """,
-            (user_id, connection_id, pair, side, closed_at),
+            (user_id, connection_id, pair, side, closed_at, closed_at),
         )
         if not deal:
             continue
@@ -211,7 +235,11 @@ def process_closed_rows_for_counter(user_id: int, connection_id: int | None, clo
                 matched_safety_orders=%s,
                 credited_volume=%s,
                 updated_at=NOW()
-            WHERE id=%s AND status='open'
+            WHERE id=%s
+              AND (
+                  status='open'
+                  OR (status='canceled' AND close_order_type='phantom_open_cleanup' AND closed_at IS NULL)
+              )
             """,
             (
                 closed_at,
@@ -263,7 +291,16 @@ def refresh_daily_site_trade_stats(stat_date: date | str | None = None) -> dict:
             (SELECT COUNT(*)
              FROM ai_site_trade_deals
              WHERE status='closed' AND closed_at >= %s AND closed_at < %s) AS closed_deals_count,
-            (SELECT COALESCE(SUM(credited_volume), 0)
+            (SELECT COALESCE(SUM(
+                COALESCE(api_entry_value, 0)
+                + CASE
+                    WHEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0)) > 0
+                      THEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0))
+                    WHEN COALESCE(api_entry_value, 0) > 0
+                      THEN COALESCE(api_entry_value, 0)
+                    ELSE 0
+                  END
+             ), 0)
              FROM ai_site_trade_deals
              WHERE status='closed' AND closed_at >= %s AND closed_at < %s) AS traded_volume
         """,

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ "Управление торговлей" if lang == "ru" else "Trading Controls" }} · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">{{ "Админ" if lang == "ru" else "Admin" }}</p>
+  <h1>{{ "Управление торговлей" if lang == "ru" else "Trading Controls" }}</h1>
+  <p>{{ "Глобальные временные ограничения на открытие новых сделок по стороне. Активный запрет применяется до создания событий и сигналов: пользователи не получают уведомлений, а сигнал не появляется в журнале." if lang == "ru" else "Global temporary side restrictions for new deals. Active blocks are applied before events and user signals are created." }}</p>
+</section>
+
+{% if success %}
+  <div class="alert success">
+    {% if success == "long_blocked" %}
+      {{ "Запрет на открытие лонгов включён." if lang == "ru" else "Long block enabled." }}
+    {% elif success == "short_blocked" %}
+      {{ "Запрет на открытие шортов включён." if lang == "ru" else "Short block enabled." }}
+    {% elif success == "long_cleared" %}
+      {{ "Запрет на открытие лонгов снят." if lang == "ru" else "Long block cleared." }}
+    {% elif success == "short_cleared" %}
+      {{ "Запрет на открытие шортов снят." if lang == "ru" else "Short block cleared." }}
+    {% else %}
+      {{ "Изменения сохранены." if lang == "ru" else "Changes saved." }}
+    {% endif %}
+  </div>
+{% endif %}
+{% if error %}
+  <div class="alert danger">
+    {{ "Укажите корректное количество часов больше 0." if lang == "ru" else "Enter a valid number of hours greater than 0." }}
+  </div>
+{% endif %}
+
+<section class="grid two">
+  {% for block in side_blocks %}
+    <article class="panel">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">{{ block.label }}</p>
+          <h2>{{ block.action_label }}</h2>
+        </div>
+        {% if block.active %}
+          <span class="badge danger">{{ "Включено" if lang == "ru" else "Active" }}</span>
+        {% else %}
+          <span class="badge">{{ "Выключено" if lang == "ru" else "Off" }}</span>
+        {% endif %}
+      </div>
+
+      <div class="metric-row">
+        <div>
+          <span>{{ "До" if lang == "ru" else "Until" }}</span>
+          <strong>{{ block.blocked_until_display }}</strong>
+        </div>
+        <div>
+          <span>{{ "Осталось" if lang == "ru" else "Remaining" }}</span>
+          <strong>{{ block.remaining_label if block.active else "—" }}</strong>
+        </div>
+      </div>
+
+      <form method="post" action="/admin/controls/side-block" class="form-stack">
+        <input type="hidden" name="side" value="{{ block.side }}">
+        <label>
+          {{ "Количество часов" if lang == "ru" else "Hours" }}
+          <input type="number" name="hours" min="0.1" max="720" step="0.1" value="6" required>
+        </label>
+        <div class="form-actions">
+          <button class="button primary" type="submit">{{ "Включить запрет" if lang == "ru" else "Enable block" }}</button>
+        </div>
+      </form>
+
+      <form method="post" action="/admin/controls/side-block/clear" class="form-actions">
+        <input type="hidden" name="side" value="{{ block.side }}">
+        <button class="button secondary" type="submit" {% if not block.active %}disabled{% endif %}>{{ "Снять запрет" if lang == "ru" else "Clear block" }}</button>
+      </form>
+    </article>
+  {% endfor %}
+</section>
+{% endblock %}

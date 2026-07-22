@@ -109,6 +109,23 @@
           {% endif %}
         </strong>
       </div>
+      {% if free_plan_status.applies %}
+        <div class="form-wide free-plan-countdown {{ 'expired' if free_plan_status.expired else '' }}">
+          <span>
+            {% if free_plan_status.expired %}
+              {{ "Действие бесплатного тарифа закончено" if lang == "ru" else "The free plan has expired" }}
+            {% else %}
+              {{ "До окончания действия бесплатного тарифа осталось" if lang == "ru" else "Free plan time left" }}
+              <b>{{ free_plan_status.days_left }}</b>
+              {{ "дн." if lang == "ru" else "days" }}
+            {% endif %}
+          </span>
+          <small>
+            {{ "Для продолжения работы подключите тариф «Бесплатный Плюс» либо любой другой подходящий тариф" if lang == "ru" else "To continue, enable Free Plus or another suitable plan" }}
+            <a href="/tariffs">{{ "Тарифы" if lang == "ru" else "Plans" }}</a>.
+          </small>
+        </div>
+      {% endif %}
       <div class="form-actions">
         <button class="button primary" type="submit">{{ "Сохранить профиль" if lang == "ru" else "Save profile" }}</button>
       </div>

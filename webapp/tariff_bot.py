@@ -93,14 +93,14 @@ async def sync_all_tariffs() -> dict[str, int]:
 
 
 async def tariff_sync_loop() -> None:
-    await asyncio.sleep(30)
+    await asyncio.sleep(600)
     while True:
         try:
             if settings.TELEGRAM_TARIFF_BOT_TOKEN:
                 await sync_all_tariffs()
         except Exception:
             logger.exception("tariff sync loop failed")
-        await asyncio.sleep(max(300, int(settings.TELEGRAM_TARIFF_SYNC_INTERVAL_SECONDS)))
+        await asyncio.sleep(max(86400, int(settings.TELEGRAM_TARIFF_SYNC_INTERVAL_SECONDS)))
 
 
 async def sync_user_tariff(user: dict[str, Any], notify_chat_id: int | None = None) -> dict[str, Any]:
@@ -135,8 +135,9 @@ async def sync_user_tariff(user: dict[str, Any], notify_chat_id: int | None = No
                 "changed": False,
                 "pending_free_checks": free_checks,
             }
+    free_started_sql = ", free_plan_started_at=NOW()" if plan == "free" and current_plan != "free" else ""
     execute(
-        "UPDATE ai_users SET plan=%s, tariff_free_checks=0, telegram_last_checked_at=NOW() WHERE id=%s",
+        f"UPDATE ai_users SET plan=%s, tariff_free_checks=0, telegram_last_checked_at=NOW(){free_started_sql} WHERE id=%s",
         (plan, int(user["id"])),
     )
     if notify_chat_id:

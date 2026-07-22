@@ -53,6 +53,7 @@
   <div class="metric"><span>{{ "Закрытый PnL" if lang == "ru" else "Closed PnL" }}</span><strong class="{{ 'positive' if monitor.summary.total_pnl_raw > 0 else ('negative' if monitor.summary.total_pnl_raw < 0 else '') }}">{{ monitor.summary.total_pnl }} USDT</strong></div>
   <div class="metric"><span>{{ "Доходность периода" if lang == "ru" else "Period return" }}</span><strong>{{ monitor.summary.period_return }}</strong></div>
   <div class="metric"><span>{{ "Сделок" if lang == "ru" else "Trades" }}</span><strong>{{ monitor.summary.total_trades }}</strong></div>
+  <div class="metric"><span>{{ "Проторгованный объём" if lang == "ru" else "Traded volume" }}</span><strong>{{ monitor.summary.traded_volume }} USDT</strong></div>
   <div class="metric"><span>{{ "Win rate" if lang == "ru" else "Win rate" }}</span><strong>{{ monitor.summary.win_rate }}</strong></div>
   <div class="metric"><span>{{ "Средний PnL в день" if lang == "ru" else "Avg PnL/day" }}</span><strong>{{ monitor.summary.avg_day }} USDT</strong></div>
   <div class="metric"><span>{{ "Открытых позиций" if lang == "ru" else "Open positions" }}</span><strong>{{ monitor.summary.positions_count }}</strong></div>
@@ -261,7 +262,7 @@
         <tbody>
           {% for pos in monitor.positions %}
             <tr>
-              <td><strong>{{ pos.symbol }}</strong></td>
+              <td><strong><a href="https://cryptorg.net/ru/byex-futures/{{ pos.symbol }}" target="_blank" rel="noopener noreferrer">{{ pos.symbol }}</a></strong></td>
               <td><span class="side {{ pos.side }}">{{ pos.side }}</span></td>
               <td>{{ pos.size }}</td>
               <td>{{ pos.entry }}</td>

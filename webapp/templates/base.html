@@ -31,7 +31,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/static/favicon/apple-touch-icon.png?v=20260601">
   <link rel="manifest" href="/site.webmanifest?v=20260601">
   <meta name="theme-color" content="#0b8f70" id="theme-color-meta">
-  <link rel="stylesheet" href="/static/app.css?v=20260629-admin-view">
+  <link rel="stylesheet" href="/static/app.css?v=20260716-free-plan-expiry">
   <!-- Yandex.Metrika counter -->
   <script type="text/javascript">
       (function(m,e,t,r,i,k,a){
@@ -114,6 +114,18 @@
     </div>
   {% endif %}
 
+  {% if free_plan_status.expired %}
+    <div class="admin-view-banner-wrap">
+      <div class="admin-view-banner free-plan-expired-banner">
+        <div>
+          <strong>{{ "Бесплатный тариф закончился" if lang == "ru" else "Free plan has expired" }}</strong>
+          <span>{{ "Для продолжения работы подключите тариф «Бесплатный Плюс» либо любой другой подходящий тариф." if lang == "ru" else "To continue, enable Free Plus or another suitable plan." }}</span>
+        </div>
+        <a class="button primary" href="/tariffs">{{ "Перейти в Тарифы" if lang == "ru" else "Open Plans" }}</a>
+      </div>
+    </div>
+  {% endif %}
+
   <main class="shell">
     {% block content %}{% endblock %}
   </main>
@@ -123,7 +135,10 @@
         <span>GRIDERS.RU &copy; 2026</span>
         <a href="/terms">{{ "Пользовательское соглашение" if lang == "ru" else "User Agreement" }}</a>
       </div>
-      <a class="footer-email" href="mailto:support@griders.ru">support@griders.ru</a>
+      <div class="footer-contacts">
+        <a href="mailto:support@griders.ru">support@griders.ru</a>
+        <a href="https://t.me/griddca" target="_blank" rel="noopener noreferrer">Telegram</a>
+      </div>
     </div>
   </footer>
   {% if admin_view.active %}
@@ -146,6 +161,35 @@
           field.disabled = true;
           field.setAttribute("aria-disabled", "true");
         });
+      });
+    })();
+  </script>
+  {% endif %}
+  {% if free_plan_status.expired %}
+  <script>
+    (function () {
+      document.documentElement.dataset.freePlanExpired = "1";
+      document.querySelectorAll("form").forEach(function (form) {
+        var action = form.getAttribute("action") || "";
+        if (form.hasAttribute("data-free-plan-allow") || action === "/logout") {
+          return;
+        }
+        var method = (form.getAttribute("method") || "get").toLowerCase();
+        if (method !== "post") {
+          return;
+        }
+        form.classList.add("account-readonly-form");
+        form.addEventListener("submit", function (event) {
+          event.preventDefault();
+        });
+        form.querySelectorAll("input, select, textarea, button").forEach(function (field) {
+          field.disabled = true;
+          field.setAttribute("aria-disabled", "true");
+        });
+      });
+      document.querySelectorAll("[data-disable-on-free-expired]").forEach(function (node) {
+        node.classList.add("disabled");
+        node.setAttribute("aria-disabled", "true");
       });
     })();
   </script>
