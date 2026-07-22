@@ -25,9 +25,10 @@
       <h2>{{ "Бесплатный" if lang == "ru" else "Free" }}</h2>
       <strong>0 USDT</strong>
     </div>
-    <p class="muted">{{ "Базовый тариф для аккуратного тестирования стратегии на небольшом депозите." if lang == "ru" else "Basic plan for careful strategy testing on a small deposit." }}</p>
+    <p class="muted">{{ "Базовый тариф для аккуратного тестирования стратегии на небольшом депозите, предоставляется всем пользователям на 14 дней." if lang == "ru" else "Basic plan for careful strategy testing on a small deposit, available to all users for 14 days." }}</p>
     <ul class="tariff-list">
       <li>{{ "Рекомендуемый депозит: от 50 USDT" if lang == "ru" else "Recommended deposit: from 50 USDT" }}</li>
+      <li>{{ "Срок действия: 14 дней" if lang == "ru" else "Duration: 14 days" }}</li>
       <li>{{ "Лимиты сделок: 4 / 4 / 4" if lang == "ru" else "Deal limits: 4 / 4 / 4" }}</li>
       <li>{{ "Максимальный первый ордер: 6 USDT" if lang == "ru" else "Maximum first order: 6 USDT" }}</li>
       <li>{{ "Расчёт первого ордера: ручной ввод" if lang == "ru" else "First-order calculation: manual input" }}</li>
@@ -42,9 +43,10 @@
       <h2>{{ "Бесплатный Плюс" if lang == "ru" else "Free Plus" }}</h2>
       <strong>0 USDT</strong>
     </div>
-    <p class="muted">{{ "Бесплатный расширенный доступ для пользователей, которые подключают новый реферальный аккаунт Cryptorg." if lang == "ru" else "Expanded free access for users who connect a new referred Cryptorg account." }}</p>
+    <p class="muted">{{ "Бесплатный расширенный доступ для пользователей, которые подключают новый реферальный аккаунт Cryptorg. Не ограничен по времени." if lang == "ru" else "Expanded free access for users who connect a new referred Cryptorg account. No time limit." }}</p>
     <ul class="tariff-list">
       <li>{{ "Рекомендуемый депозит: от 100 USDT" if lang == "ru" else "Recommended deposit: from 100 USDT" }}</li>
+      <li>{{ "Срок действия: без ограничений по времени" if lang == "ru" else "Duration: no time limit" }}</li>
       <li>{{ "Лимиты сделок: 6 / 6 / 6" if lang == "ru" else "Deal limits: 6 / 6 / 6" }}</li>
       <li>{{ "Максимальный первый ордер: 12 USDT" if lang == "ru" else "Maximum first order: 12 USDT" }}</li>
       <li>{{ "Расчёт первого ордера от депозита: от 1 до 10%" if lang == "ru" else "First order from deposit: 1% to 10%" }}</li>
@@ -65,8 +67,7 @@
       <p class="eyebrow">{{ "Оптимальный старт" if lang == "ru" else "Optimal start" }}</p>
       <h2>{{ "Старт" if lang == "ru" else "Start" }}</h2>
       <strong class="tariff-price">
-        <span class="old-price">19.5 USD / {{ "мес." if lang == "ru" else "mo." }}</span>
-        <span class="new-price">13.65 USD / {{ "мес." if lang == "ru" else "mo." }}</span>
+        <span class="new-price">10 USDT / {{ "мес." if lang == "ru" else "mo." }}</span>
       </strong>
       <span class="tariff-wallet-note">
         {% if lang == "ru" %}
@@ -75,18 +76,16 @@
           USDT payment requires the Telegram <button type="button" class="inline-link tariff-wallet-link" data-wallet-link>Wallet</button>
         {% endif %}
       </span>
-      <span class="tariff-promo">{{ "Первый месяц скидка 30%" if lang == "ru" else "30% off the first month" }}</span>
     </div>
     <p class="muted">{{ "Тариф для пользователей, которые хотят увеличить лимиты при умеренном депозите." if lang == "ru" else "A plan for users who want higher limits with a moderate deposit." }}</p>
     <ul class="tariff-list">
-      <li>{{ "Рекомендуемый депозит: от 500 USD" if lang == "ru" else "Recommended deposit: from 500 USD" }}</li>
-      <li class="tariff-free-days">{{ "3 дня бесплатно, 1й месяц 13.65 USD/мес, далее 19.5 USD/мес" if lang == "ru" else "3 days free, first month 13.65 USD/mo, then 19.5 USD/mo" }}</li>
+      <li>{{ "Рекомендуемый депозит: от 500 USDT" if lang == "ru" else "Recommended deposit: from 500 USDT" }}</li>
       <li>{{ "Лимиты сделок: 8 / 8 / 8" if lang == "ru" else "Deal limits: 8 / 8 / 8" }}</li>
-      <li>{{ "Максимальный первый ордер: 60 USD" if lang == "ru" else "Maximum first order: 60 USD" }}</li>
+      <li>{{ "Максимальный первый ордер: 60 USDT" if lang == "ru" else "Maximum first order: 60 USDT" }}</li>
       <li>{{ "Расчёт первого ордера от депозита доступен" if lang == "ru" else "First-order calculation from deposit is available" }}</li>
       <li>{{ "Недоступная пара: BTCUSDT" if lang == "ru" else "Unavailable pair: BTCUSDT" }}</li>
     </ul>
-    <a class="button primary" href="https://t.me/tribute/app?startapp=sXuB" target="_blank" rel="noopener" data-tariff-subscribe data-telegram-linked="{{ 1 if user and user.telegram_user_id else 0 }}">{{ "Подключить" if lang == "ru" else "Enable" }}</a>
+    <a class="button primary" href="https://t.me/tribute/app?startapp=s10VB" target="_blank" rel="noopener" data-tariff-subscribe data-telegram-linked="{{ 1 if user and user.telegram_user_id else 0 }}">{{ "Подключить" if lang == "ru" else "Enable" }}</a>
   </article>
 
   <article class="panel tariff-card">
@@ -117,7 +116,7 @@
       <p class="eyebrow">{{ "Расширенные лимиты" if lang == "ru" else "Expanded limits" }}</p>
       <h2>{{ "Премиум" if lang == "ru" else "Premium" }}</h2>
       <strong class="tariff-price">
-        <span class="new-price">150 USD / {{ "мес." if lang == "ru" else "mo." }}</span>
+        <span class="new-price">50 USDT / {{ "мес." if lang == "ru" else "mo." }}</span>
       </strong>
       <span class="tariff-wallet-note">
         {% if lang == "ru" %}
@@ -130,7 +129,6 @@
     </div>
     <p class="muted">{{ "Тариф для более крупного депозита и большего количества одновременных сделок." if lang == "ru" else "A plan for a larger deposit and more simultaneous deals." }}</p>
     <ul class="tariff-list">
-      <li>{{ "Стоимость тарифа: 150 USD / мес." if lang == "ru" else "Plan price: 150 USD / mo." }}</li>
       <li>{{ "При действующем тарифе Старт скидка на переход на Премиум 20% на первый месяц по запросу." if lang == "ru" else "With an active Start plan, the Premium upgrade discount is 20% for the first month by request." }}</li>
       <li>{{ "Лимиты сделок: 12 / 12 / 12" if lang == "ru" else "Deal limits: 12 / 12 / 12" }}</li>
       <li>{{ "Максимальный первый ордер: 600 USDT" if lang == "ru" else "Maximum first order: 600 USDT" }}</li>
@@ -148,7 +146,7 @@
     </div>
     <p class="muted">{{ "Тариф для крупных депозитов, расширенных лимитов и гибкого управления сеткой." if lang == "ru" else "A plan for large deposits, expanded limits, and flexible grid management." }}</p>
     <ul class="tariff-list">
-      <li>{{ "Лимиты сделок: 40 / 40 / 40" if lang == "ru" else "Deal limits: 40 / 40 / 40" }}</li>
+      <li>{{ "Лимиты сделок: 40 / 20 / 20" if lang == "ru" else "Deal limits: 40 / 20 / 20" }}</li>
       <li>{{ "Максимальный первый ордер: 2000 USDT" if lang == "ru" else "Maximum first order: 2000 USDT" }}</li>
       <li>{{ "Расчёт первого ордера от депозита: до 15%" if lang == "ru" else "First order from deposit: up to 15%" }}</li>
       <li>{{ "Доступны все торговые пары" if lang == "ru" else "All trading pairs are available" }}</li>

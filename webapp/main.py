@@ -19,20 +19,20 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.requests import ClientDisconnect
 
 import ghost_webhook
 
 from . import settings
-from .agent import agent_loop, risk_pause_status, scan_once
-from .cryptorg_monitor import closed_pnl_history_page, extract_usdt_balance, open_orders, positions, wallet_balance
+from .cryptorg_monitor import closed_pnl_history, closed_pnl_history_page, extract_usdt_balance, open_orders, positions, wallet_balance
 from .db import execute, fetch_all, fetch_one, init_db
 from .grid_dca_webhook import enqueue_tradingview_grid_dca, next_pending_tradingview_grid_event_id, process_tradingview_grid_dca_event
 from .i18n import LANG_COOKIE, normalize_lang, ui
 from .launch_guard import release_pair_launch, release_strategy_side_launch, reserve_pair_launch, reserve_strategy_side_launch
 from .mailer import send_email_verification, send_password_reset, smtp_configured
-from .market_shock import handle_telegram_update
 from .tariff_bot import handle_tariff_bot_update, sync_user_tariff, tariff_sync_loop, telegram_verify_url
 from .trade_stats import process_closed_rows_for_counter, refresh_recent_daily_site_trade_stats, site_totals, trade_analysis_summary
+from .trading_controls import clear_side_block, set_side_block, side_block_statuses
 from .security import (
     decrypt_secret,
     encrypt_secret,
@@ -59,6 +59,9 @@ ADMIN_VIEW_USER_COOKIE = "griders_admin_view_user_id"
 DEFAULT_TIMEZONE = "Europe/Moscow"
 CONNECTION_VIDEO_RUTUBE_URL = "https://rutube.ru/video/private/40c07f768175b6710b6425150e3b0c86/?p=X1U8JjmvHkPrJIx5tV5VGw"
 CONNECTION_VIDEO_YOUTUBE_URL = "https://youtu.be/hLUOPT37f2M"
+PUBLIC_ANALYTICS_CACHE_KEY = "public_analytics_v1"
+PUBLIC_ANALYTICS_CACHE_SECONDS = 3600
+FREE_PLAN_DAYS = 14
 PREFERRED_TIMEZONES = [
     "Europe/Moscow",
     "Europe/Kaliningrad",
@@ -85,21 +88,17 @@ PREFERRED_TIMEZONES = [
 ]
 TRADINGVIEW_QUEUE_MAXSIZE = 500
 TRADINGVIEW_GRID_WORKERS = 3
-MARKET_SHOCK_QUEUE_MAXSIZE = 1000
-MARKET_SHOCK_QUEUE_TRIM_AT = 500
-MARKET_SHOCK_QUEUE_KEEP = 100
-MARKET_SHOCK_WORKER_PAUSE_SECONDS = 0.25
-MARKET_SHOCK_PROCESSING_ENABLED = False
-ADMIN_STATS_BACKGROUND_ENABLED = True
+ADMIN_STATS_BACKGROUND_ENABLED = settings.ADMIN_STATS_BACKGROUND_ENABLED
 ADMIN_STATS_MANUAL_USER_PAUSE_SECONDS = 3.0
 GRIDERS_OPEN_DEAL_SYNC_ENABLED = True
-GRIDERS_OPEN_DEAL_SYNC_SECONDS = 180
+GRIDERS_OPEN_DEAL_SYNC_SECONDS = 900
 GRIDERS_OPEN_DEAL_CLEANUP_GRACE_MINUTES = 90
 MONITORING_ACCOUNT_CACHE_SECONDS = 180
+OPEN_ORDERS_ALERT_CACHE_SECONDS = 300
 MONITORING_DATA_START_DATE = datetime(2026, 6, 7).date()
+ADMIN_MONITORING_DATA_START_DATE = datetime(2026, 6, 25).date()
 PUBLIC_HTTPS_HOSTS = {"griders.ru", "www.griders.ru"}
 tradingview_grid_queue: asyncio.Queue[dict] | None = None
-market_shock_queue: asyncio.Queue[dict] | None = None
 admin_stats_refresh_task: asyncio.Task | None = None
 
 PLAN_LIMITS = {
@@ -173,8 +172,8 @@ PLAN_LIMITS = {
         "name_ru": "Премиум Плюс",
         "name_en": "Premium Plus",
         "max_active_deals": 40,
-        "max_long_deals": 40,
-        "max_short_deals": 40,
+        "max_long_deals": 20,
+        "max_short_deals": 20,
         "max_first_order": 2000.0,
         "recommended_balance": None,
         "can_use_deposit_pct": True,
@@ -256,18 +255,28 @@ async def block_admin_view_writes(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def block_expired_free_plan_writes(request: Request, call_next):
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return await call_next(request)
+    allowed_paths = {"/logout", "/language"}
+    if request.url.path in allowed_paths or request.url.path.startswith("/integrations/"):
+        return await call_next(request)
+    user = current_user(request)
+    if user and _free_plan_status(user)["expired"] and not _user_access(user)["is_admin"]:
+        _disable_expired_free_user_strategies(int(user["id"]))
+        return RedirectResponse("/tariffs?free_expired=1", status_code=303)
+    return await call_next(request)
+
+
 @app.on_event("startup")
 async def on_startup() -> None:
-    global tradingview_grid_queue, market_shock_queue
+    global tradingview_grid_queue
     init_db()
+    _disable_all_expired_free_strategies()
     tradingview_grid_queue = asyncio.Queue(maxsize=TRADINGVIEW_QUEUE_MAXSIZE)
-    market_shock_queue = asyncio.Queue(maxsize=MARKET_SHOCK_QUEUE_MAXSIZE)
     for worker_id in range(TRADINGVIEW_GRID_WORKERS):
         asyncio.create_task(_tradingview_grid_worker(worker_id + 1))
-    if MARKET_SHOCK_PROCESSING_ENABLED:
-        asyncio.create_task(_market_shock_worker())
-    if settings.AGENT_ENABLED:
-        asyncio.create_task(agent_loop())
     if ADMIN_STATS_BACKGROUND_ENABLED:
         asyncio.create_task(_admin_stats_loop())
     if GRIDERS_OPEN_DEAL_SYNC_ENABLED:
@@ -275,6 +284,7 @@ async def on_startup() -> None:
     if settings.GRID_DCA_ACCOUNT_CACHE_ENABLED:
         asyncio.create_task(_grid_dca_account_cache_loop())
     asyncio.create_task(_daily_trade_stats_loop())
+    asyncio.create_task(_free_plan_expiry_loop())
     asyncio.create_task(tariff_sync_loop())
 
 
@@ -305,24 +315,8 @@ async def _tradingview_grid_worker(worker_id: int) -> None:
             if queued_item:
                 tradingview_grid_queue.task_done()
 
-
-async def _market_shock_worker() -> None:
-    while True:
-        if market_shock_queue is None:
-            await asyncio.sleep(1)
-            continue
-        update = await market_shock_queue.get()
-        try:
-            await handle_telegram_update(update)
-        except Exception:
-            logger.exception("Telegram MarketShock queue item failed")
-        finally:
-            market_shock_queue.task_done()
-            await asyncio.sleep(MARKET_SHOCK_WORKER_PAUSE_SECONDS)
-
-
 async def _grid_dca_account_cache_loop() -> None:
-    await asyncio.sleep(2)
+    await asyncio.sleep(10)
     while True:
         try:
             updated = await _refresh_grid_dca_account_cache_once()
@@ -330,23 +324,40 @@ async def _grid_dca_account_cache_loop() -> None:
                 logger.info("Updated GRID DCA account cache for %s connections", updated)
         except Exception:
             logger.exception("GRID DCA account cache refresh failed")
-        await asyncio.sleep(max(5, int(settings.GRID_DCA_ACCOUNT_CACHE_SYNC_SECONDS)))
+        await asyncio.sleep(max(30, int(settings.GRID_DCA_ACCOUNT_CACHE_SYNC_SECONDS)))
+
+
+async def _free_plan_expiry_loop() -> None:
+    await asyncio.sleep(60)
+    while True:
+        try:
+            _disable_all_expired_free_strategies()
+        except Exception:
+            logger.exception("Free plan expiry check failed")
+        await asyncio.sleep(24 * 60 * 60)
 
 
 async def _refresh_grid_dca_account_cache_once() -> int:
     rows = fetch_all(
         """
-        SELECT DISTINCT c.id, c.user_id, c.bybit_api_key, c.bybit_api_secret_encrypted
+        SELECT DISTINCT c.id, c.user_id, c.bybit_api_key, c.bybit_api_secret_encrypted,
+               c.last_risk_pause_snapshot,
+               c.last_risk_pause_checked_at,
+               c.last_open_orders_snapshot,
+               c.last_open_orders_checked_at
         FROM ai_user_connections c
         JOIN ai_user_strategy_settings s ON s.connection_id = c.id
         WHERE c.is_active = 1
+          AND COALESCE(c.approval_status, 'approved') = 'approved'
           AND s.enabled = 1
           AND s.auto_trade = 1
-          AND s.strategy_code IN ('grid_dca_v2', 'grid_dca_v3')
+          AND s.strategy_code = 'grid_dca_v2'
           AND c.bybit_api_key <> ''
           AND c.bybit_api_secret_encrypted IS NOT NULL
         ORDER BY COALESCE(c.last_positions_checked_at, CAST('1970-01-01 00:00:00' AS DATETIME)) ASC, c.id ASC
+        LIMIT %s
         """,
+        (max(1, int(settings.GRID_DCA_ACCOUNT_CACHE_BATCH_SIZE)),),
     )
     if not rows:
         return 0
@@ -386,14 +397,44 @@ async def _refresh_grid_dca_connection_cache(row: dict) -> bool:
             timeout=15,
         )
         balance = extract_usdt_balance(wallet)
-        risk_reason = None
-        try:
-            pause = await asyncio.wait_for(risk_pause_status(api_key, api_secret, balance), timeout=15)
-            if pause and not _risk_pause_override_active(user_id):
-                risk_reason = pause["reason"]
-        except Exception as exc:
-            logger.warning("GRID DCA risk cache failed for user %s connection %s: %s", user_id, connection_id, exc)
-        _store_connection_account_cache(connection_id, balance, position_rows, risk_reason)
+        open_orders_snapshot = _json_loads(row.get("last_open_orders_snapshot"), {}) or {}
+        open_orders_checked_at = _as_utc_datetime(row.get("last_open_orders_checked_at"))
+        open_position_pairs = {
+            str(position.get("symbol") or "").upper()
+            for position in (position_rows or [])
+            if _dashboard_position_is_open(position) and str(position.get("symbol") or "").strip()
+        }
+        cached_order_pairs = set(open_orders_snapshot.keys()) if isinstance(open_orders_snapshot, dict) else set()
+        open_orders_checked_now = False
+        open_orders_cache_age = (
+            (datetime.now(timezone.utc) - open_orders_checked_at).total_seconds()
+            if open_orders_checked_at is not None
+            else 999999
+        )
+        if open_orders_cache_age > OPEN_ORDERS_ALERT_CACHE_SECONDS or not open_position_pairs.issubset(cached_order_pairs):
+            open_orders_checked_now = True
+            open_orders_snapshot = await _open_orders_snapshot_for_positions(api_key, api_secret, position_rows)
+        risk_status = _json_loads(row.get("last_risk_pause_snapshot"), {}) or None
+        risk_checked_at = _as_utc_datetime(row.get("last_risk_pause_checked_at"))
+        risk_cache_stale = risk_checked_at is None or (datetime.now(timezone.utc) - risk_checked_at).total_seconds() > 1800
+        risk_checked_now = False
+        if risk_cache_stale:
+            risk_checked_now = True
+            if risk_checked_at is not None:
+                try:
+                    pause = await asyncio.wait_for(risk_pause_status(api_key, api_secret, balance), timeout=15)
+                    risk_status = pause if pause and not _risk_pause_override_active(user_id) else None
+                except Exception as exc:
+                    logger.warning("GRID DCA risk cache failed for user %s connection %s: %s", user_id, connection_id, exc)
+        _store_connection_account_cache(
+            connection_id,
+            balance,
+            position_rows,
+            open_orders_snapshot,
+            risk_status,
+            open_orders_checked=open_orders_checked_now,
+            risk_checked=risk_checked_now,
+        )
         return True
     except Exception as exc:
         execute(
@@ -403,7 +444,36 @@ async def _refresh_grid_dca_connection_cache(row: dict) -> bool:
         return False
 
 
-def _store_connection_account_cache(connection_id: int, balance: float, position_rows: list[dict], risk_reason: str | None = None) -> None:
+async def _open_orders_snapshot_for_positions(api_key: str, api_secret: str, position_rows: list[dict]) -> dict[str, list[dict]]:
+    pairs = sorted({
+        str(position.get("symbol") or "").upper()
+        for position in (position_rows or [])
+        if _dashboard_position_is_open(position) and str(position.get("symbol") or "").strip()
+    })
+    if not pairs:
+        return {}
+
+    async def fetch_pair(pair: str) -> tuple[str, list[dict]]:
+        try:
+            orders = await asyncio.wait_for(open_orders(api_key, api_secret, pair), timeout=8)
+            return pair, orders or []
+        except Exception as exc:
+            logger.warning("GRID DCA open-orders cache failed for %s: %s", pair, exc)
+            return pair, []
+
+    results = await asyncio.gather(*(fetch_pair(pair) for pair in pairs))
+    return {pair: orders for pair, orders in results}
+
+
+def _store_connection_account_cache(
+    connection_id: int,
+    balance: float,
+    position_rows: list[dict],
+    open_orders_snapshot: dict[str, list[dict]] | None = None,
+    risk_status: dict | None = None,
+    open_orders_checked: bool = True,
+    risk_checked: bool = True,
+) -> None:
     execute(
         """
         UPDATE ai_user_connections
@@ -411,18 +481,43 @@ def _store_connection_account_cache(connection_id: int, balance: float, position
             last_error=NULL,
             last_checked_at=NOW(),
             last_positions_snapshot=%s,
-            last_positions_checked_at=NOW(),
-            last_risk_pause_reason=%s,
-            last_risk_pause_checked_at=NOW()
+            last_positions_checked_at=NOW()
         WHERE id=%s
         """,
         (
             balance,
             json.dumps(position_rows or [], ensure_ascii=False, default=str),
-            risk_reason,
             connection_id,
         ),
     )
+    if open_orders_checked:
+        execute(
+            """
+            UPDATE ai_user_connections
+            SET last_open_orders_snapshot=%s,
+                last_open_orders_checked_at=NOW()
+            WHERE id=%s
+            """,
+            (
+                json.dumps(open_orders_snapshot or {}, ensure_ascii=False, default=str),
+                connection_id,
+            ),
+        )
+    if risk_checked:
+        execute(
+            """
+            UPDATE ai_user_connections
+            SET last_risk_pause_reason=%s,
+                last_risk_pause_snapshot=%s,
+                last_risk_pause_checked_at=NOW()
+            WHERE id=%s
+            """,
+            (
+                (risk_status or {}).get("reason"),
+                json.dumps(risk_status or {}, ensure_ascii=False, default=str),
+                connection_id,
+            ),
+        )
 
 
 def _store_connection_positions_cache(connection_id: int, position_rows: list[dict]) -> None:
@@ -447,25 +542,55 @@ def _risk_pause_override_active(user_id: int) -> bool:
     ))
 
 
-def _drop_old_queue_items(queue: asyncio.Queue, keep: int) -> int:
-    dropped = 0
-    while queue.qsize() > keep:
-        try:
-            queue.get_nowait()
-        except asyncio.QueueEmpty:
-            break
-        queue.task_done()
-        dropped += 1
-    return dropped
+async def risk_pause_status(api_key: str, api_secret: str, balance: float) -> dict | None:
+    if not settings.RISK_GUARD_ENABLED:
+        return None
+    now_ms = int(time.time() * 1000)
+    day_start_ms = now_ms - 24 * 60 * 60 * 1000
+    cooldown_start_ms = now_ms - int(settings.STOP_LOSS_COOLDOWN_HOURS * 60 * 60 * 1000)
+    daily_rows = await closed_pnl_history(api_key, api_secret, day_start_ms, now_ms)
+    pauses: list[dict] = []
+
+    daily_pnl = sum(float(row.get("closedPnl") or 0) for row in daily_rows)
+    max_daily_loss = balance * settings.DAILY_LOSS_STOP_PCT / 100.0 if balance > 0 else 0
+    if max_daily_loss > 0 and daily_pnl <= -max_daily_loss:
+        loss_rows = [row for row in daily_rows if float(row.get("closedPnl") or 0) < 0]
+        trigger_ms = max(
+            int(row.get("updatedTime") or row.get("createdTime") or now_ms)
+            for row in (loss_rows or daily_rows)
+        )
+        pauses.append({
+            "type": "daily_loss",
+            "reason": f"пауза риска: суточный закрытый PnL {daily_pnl:.2f} USDT достиг лимита убытка {settings.DAILY_LOSS_STOP_PCT}%",
+            "ends_at_ms": trigger_ms + int(settings.DAILY_LOSS_COOLDOWN_HOURS * 60 * 60 * 1000),
+        })
+
+    stop_rows = [
+        row for row in daily_rows
+        if int(row.get("updatedTime") or row.get("createdTime") or 0) >= cooldown_start_ms
+        and _looks_like_stop_loss(row)
+    ]
+    if stop_rows:
+        newest = max(int(row.get("updatedTime") or row.get("createdTime") or now_ms) for row in stop_rows)
+        pauses.append({
+            "type": "stop_loss",
+            "reason": f"пауза риска: за последние {settings.STOP_LOSS_COOLDOWN_HOURS:g}ч найдено закрытие по стоп-лоссу",
+            "ends_at_ms": newest + int(settings.STOP_LOSS_COOLDOWN_HOURS * 60 * 60 * 1000),
+        })
+
+    active = [pause for pause in pauses if pause["ends_at_ms"] > now_ms]
+    if not active:
+        return None
+    status = max(active, key=lambda item: item["ends_at_ms"])
+    status["remaining_seconds"] = max(0, int((status["ends_at_ms"] - now_ms) / 1000))
+    status["ends_at"] = datetime.fromtimestamp(status["ends_at_ms"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return status
 
 
-def _trim_market_shock_queue_if_needed() -> int:
-    if market_shock_queue is None or market_shock_queue.qsize() < MARKET_SHOCK_QUEUE_TRIM_AT:
-        return 0
-    dropped = _drop_old_queue_items(market_shock_queue, MARKET_SHOCK_QUEUE_KEEP)
-    if dropped:
-        logger.warning("Dropped %s stale Telegram MarketShock queue items", dropped)
-    return dropped
+def _looks_like_stop_loss(row: dict) -> bool:
+    closed_pnl = float(row.get("closedPnl") or 0)
+    order_type = str(row.get("orderType") or "").lower()
+    return closed_pnl < 0 and order_type == "market"
 
 
 def _session_user(request: Request) -> dict | None:
@@ -518,6 +643,8 @@ def require_user(request: Request) -> dict | RedirectResponse:
         return RedirectResponse("/login", status_code=303)
     if not _admin_view_active(request):
         _apply_user_plan_constraints(user)
+        if _free_plan_status(user)["expired"]:
+            _disable_expired_free_user_strategies(int(user["id"]))
     return user
 
 
@@ -531,6 +658,8 @@ def render(request: Request, template: str, context: dict | None = None, status_
         "app_name": settings.APP_NAME,
         "user": user,
         "user_access": _user_access(user),
+        "free_plan_status": _free_plan_status(user),
+        "account_readonly": bool(_free_plan_status(user)["expired"] or admin_view["active"]),
         "viewer_user": viewer,
         "viewer_access": _user_access(viewer),
         "admin_view": admin_view,
@@ -627,6 +756,49 @@ def _effective_plan(user: dict | None) -> str:
     return plan
 
 
+def _free_plan_status(user: dict | None) -> dict:
+    if not user or str((user or {}).get("role") or "user") == "admin" or _effective_plan(user) != "free":
+        return {"applies": False, "expired": False, "days_left": None, "seconds_left": None, "expires_at": None}
+    started_at = _as_utc_datetime((user or {}).get("free_plan_started_at") or (user or {}).get("created_at"))
+    expires_at = started_at + timedelta(days=FREE_PLAN_DAYS)
+    now = datetime.now(timezone.utc)
+    seconds_left = max(0, int((expires_at - now).total_seconds()))
+    days_left = 0 if seconds_left <= 0 else max(1, (seconds_left + 86399) // 86400)
+    return {
+        "applies": True,
+        "expired": seconds_left <= 0,
+        "days_left": int(days_left),
+        "seconds_left": seconds_left,
+        "expires_at": expires_at,
+    }
+
+
+def _disable_expired_free_user_strategies(user_id: int) -> None:
+    execute(
+        """
+        UPDATE ai_user_strategy_settings
+        SET enabled=0, auto_trade=0
+        WHERE user_id=%s AND (enabled<>0 OR auto_trade<>0)
+        """,
+        (int(user_id),),
+    )
+
+
+def _disable_all_expired_free_strategies() -> None:
+    execute(
+        """
+        UPDATE ai_user_strategy_settings s
+        JOIN ai_users u ON u.id = s.user_id
+        SET s.enabled=0, s.auto_trade=0
+        WHERE u.role<>'admin'
+          AND u.plan='free'
+          AND COALESCE(u.referral_verified, 0)=0
+          AND COALESCE(u.free_plan_started_at, u.created_at) <= DATE_SUB(NOW(), INTERVAL 14 DAY)
+          AND (s.enabled<>0 OR s.auto_trade<>0)
+        """
+    )
+
+
 def _plan_limits(user: dict | None) -> dict:
     if str((user or {}).get("role") or "user") == "admin":
         return dict(ADMIN_PLAN_LIMITS)
@@ -709,6 +881,7 @@ def _user_access(user: dict | None) -> dict:
     referral_verified = _referral_verified(user)
     is_admin = role == "admin"
     limits = _plan_limits(user)
+    free_plan_status = _free_plan_status(user)
     return {
         "role": role,
         "plan": plan,
@@ -721,14 +894,12 @@ def _user_access(user: dict | None) -> dict:
         "is_start": bool(user) and plan in {"start", "start_plus"},
         "is_free": bool(user) and plan == "free" and not is_admin,
         "is_paid": bool(user) and plan in {"start", "start_plus", "premium", "premium_plus"},
-        "can_use_market_shock": is_admin,
+        "free_plan_status": free_plan_status,
+        "free_plan_expired": bool(free_plan_status["expired"]),
     }
 
 
 def _available_strategies(user: dict | None) -> dict:
-    access = _user_access(user)
-    if access["is_admin"]:
-        return dict(STRATEGIES)
     return {settings.DEFAULT_STRATEGY_CODE: STRATEGIES[settings.DEFAULT_STRATEGY_CODE]}
 
 
@@ -743,7 +914,17 @@ def _can_create_connection(user: dict | None, connections: list[dict] | None = N
     if not uid:
         return False
     existing = connections if connections is not None else _connections(uid)
-    return len(existing) == 0
+    return len(existing) < _connection_limit(user)
+
+
+def _connection_limit(user: dict | None) -> int:
+    if _user_access(user)["is_admin"]:
+        return 100
+    return 3 if _effective_plan(user) == "premium_plus" else 1
+
+
+def _premium_plus_connections_unlocked(user: dict | None) -> bool:
+    return bool(user) and _effective_plan(user) == "premium_plus"
 
 
 def _is_free_user(user: dict | None) -> bool:
@@ -872,20 +1053,95 @@ def _admin_analytics_context(user: dict, success: str = "", error: str = "") -> 
     profile_user["plan_label_en"] = _user_plan_label(user, "en")
     admin_users = _admin_user_views(user)
     admin_trade_analysis = _admin_trade_analysis(user)
-    admin_griders_chart_rows = _admin_griders_trade_chart_rows(user)
+    admin_griders_chart_rows = _griders_trade_chart_rows()
     return {
         "profile_user": profile_user,
         "success": success,
         "error": error,
         "admin_users": admin_users,
         "admin_users_totals": _admin_user_totals(admin_users),
-        "admin_site_stats": _admin_site_stats(user),
+        "admin_pending_connections": _admin_pending_connection_views(),
+        "admin_site_stats": _site_stats_view(),
         "admin_trade_analysis": admin_trade_analysis,
         "admin_trade_analysis_totals": _admin_trade_analysis_totals(admin_trade_analysis),
-        "admin_griders_trades_totals": _admin_griders_trade_totals_from_db(user),
-        "admin_griders_trades_chart_json": _admin_griders_trade_chart_json(admin_griders_chart_rows, user),
+        "admin_griders_trades_totals": _griders_trade_totals_from_db(),
+        "admin_griders_trades_chart_json": _griders_trade_chart_json(admin_griders_chart_rows, user, start_date=ADMIN_MONITORING_DATA_START_DATE),
         "tariffs": PLAN_LIMITS,
         "base_tariff_codes": BASE_PLAN_OPTIONS,
+    }
+
+
+def _admin_controls_context(user: dict, success: str = "", error: str = "") -> dict:
+    statuses = []
+    now = datetime.now(timezone.utc)
+    for row in side_block_statuses():
+        blocked_until = _as_utc_datetime(row.get("blocked_until"))
+        remaining = int(row.get("remaining_seconds") or 0)
+        statuses.append(
+            {
+                **row,
+                "label": "Лонги" if row["side"] == "long" else "Шорты",
+                "action_label": "Не открывать лонги" if row["side"] == "long" else "Не открывать шорты",
+                "active": bool(row.get("active")) and blocked_until is not None and blocked_until > now,
+                "blocked_until_display": _format_user_datetime(blocked_until, user) if blocked_until else "—",
+                "remaining_label": _format_duration(remaining),
+            }
+        )
+    return {
+        "profile_user": user,
+        "success": success,
+        "error": error,
+        "side_blocks": statuses,
+    }
+
+
+def _public_analytics_data() -> dict:
+    row = fetch_one(
+        """
+        SELECT cache_value
+        FROM ai_public_cache
+        WHERE cache_key=%s
+          AND TIMESTAMPDIFF(SECOND, updated_at, UTC_TIMESTAMP()) < %s
+        """,
+        (PUBLIC_ANALYTICS_CACHE_KEY, PUBLIC_ANALYTICS_CACHE_SECONDS),
+    )
+    if row and row.get("cache_value"):
+        try:
+            cached = json.loads(str(row["cache_value"]))
+            if isinstance(cached, dict):
+                return cached
+        except Exception:
+            logger.warning("Invalid public analytics cache payload; rebuilding")
+
+    trade_analysis = _trade_analysis_view()
+    data = {
+        "public_site_stats": _site_stats_view(),
+        "public_trade_analysis": trade_analysis,
+        "public_trade_analysis_totals": _admin_trade_analysis_totals(trade_analysis),
+        "public_griders_trades_totals": _griders_trade_totals_from_db(),
+        "public_griders_trades_chart_json": _griders_trade_chart_json(_griders_trade_chart_rows(), None),
+    }
+    execute(
+        """
+        INSERT INTO ai_public_cache (cache_key, cache_value, updated_at)
+        VALUES (%s, %s, UTC_TIMESTAMP())
+        ON DUPLICATE KEY UPDATE
+            cache_value=VALUES(cache_value),
+            updated_at=UTC_TIMESTAMP()
+        """,
+        (PUBLIC_ANALYTICS_CACHE_KEY, json.dumps(data, ensure_ascii=False, default=str)),
+    )
+    return data
+
+
+def _public_analytics_context(user: dict | None = None) -> dict:
+    data = _public_analytics_data()
+    return {
+        "public_site_stats": data["public_site_stats"],
+        "public_trade_analysis": data["public_trade_analysis"],
+        "public_trade_analysis_totals": data["public_trade_analysis_totals"],
+        "public_griders_trades_totals": data["public_griders_trades_totals"],
+        "public_griders_trades_chart_json": data["public_griders_trades_chart_json"],
     }
 
 
@@ -982,12 +1238,11 @@ def _registration_bot_error(request: Request) -> str:
     )
 
 
-def _admin_site_stats(user: dict) -> dict:
-    if not _user_access(user)["is_admin"]:
-        return {}
+def _site_stats_view() -> dict:
     totals = site_totals()
     return {
         "users_count": totals["users_count"],
+        "active_users_count": totals["active_users_count"],
         "deals_count": totals["deals_count"],
         "traded_volume_raw": totals["traded_volume"],
         "traded_volume": _fmt_money(totals["traded_volume"]),
@@ -995,9 +1250,13 @@ def _admin_site_stats(user: dict) -> dict:
     }
 
 
-def _admin_trade_analysis(user: dict) -> list[dict]:
+def _admin_site_stats(user: dict) -> dict:
     if not _user_access(user)["is_admin"]:
-        return []
+        return {}
+    return _site_stats_view()
+
+
+def _trade_analysis_view() -> list[dict]:
     rows = []
     for row in trade_analysis_summary():
         rows.append({
@@ -1013,6 +1272,12 @@ def _admin_trade_analysis(user: dict) -> list[dict]:
             "close_reason_label": _trade_close_reason_label(row["close_reason"]),
         })
     return rows
+
+
+def _admin_trade_analysis(user: dict) -> list[dict]:
+    if not _user_access(user)["is_admin"]:
+        return []
+    return _trade_analysis_view()
 
 
 def _admin_trade_analysis_totals(rows: list[dict]) -> dict:
@@ -1066,6 +1331,7 @@ def _admin_user_views(user: dict) -> list[dict]:
                COALESCE(g.cumulative_pnl, 0) AS cumulative_pnl,
                COALESCE(g.closed_trades_count, 0) AS closed_trades_count,
                COALESCE(g.closed_entry_volume, 0) AS closed_entry_volume,
+               COALESCE(v.traded_volume_30d, 0) AS traded_volume_30d,
                COALESCE(s.connection_status, 'missing') AS connection_status,
                s.pnl_calculated_at, s.status_checked_at
         FROM ai_users u
@@ -1074,11 +1340,37 @@ def _admin_user_views(user: dict) -> list[dict]:
             SELECT user_id,
                    COALESCE(SUM(closed_pnl), 0) AS cumulative_pnl,
                    COUNT(*) AS closed_trades_count,
-                   COALESCE(SUM(api_entry_value), 0) AS closed_entry_volume
+                   COALESCE(SUM(
+                       COALESCE(api_entry_value, 0)
+                       + CASE
+                           WHEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0)) > 0
+                             THEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0))
+                           WHEN COALESCE(api_entry_value, 0) > 0
+                             THEN COALESCE(api_entry_value, 0)
+                           ELSE 0
+                         END
+                   ), 0) AS closed_entry_volume
             FROM ai_site_trade_deals
             WHERE status='closed'
             GROUP BY user_id
         ) g ON g.user_id = u.id
+        LEFT JOIN (
+            SELECT user_id,
+                   COALESCE(SUM(
+                       COALESCE(api_entry_value, 0)
+                       + CASE
+                           WHEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0)) > 0
+                             THEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0))
+                           WHEN COALESCE(api_entry_value, 0) > 0
+                             THEN COALESCE(api_entry_value, 0)
+                           ELSE 0
+                         END
+                   ), 0) AS traded_volume_30d
+            FROM ai_site_trade_deals
+            WHERE status='closed'
+              AND closed_at >= UTC_TIMESTAMP() - INTERVAL 30 DAY
+            GROUP BY user_id
+        ) v ON v.user_id = u.id
         ORDER BY u.created_at ASC, u.id ASC
         """
     )
@@ -1109,6 +1401,8 @@ def _admin_user_views(user: dict) -> list[dict]:
             }.get(status, "Нет рабочего подключения"),
             "cumulative_pnl_raw": pnl,
             "cumulative_pnl": _fmt_money(pnl),
+            "traded_volume_30d_raw": _float(row.get("traded_volume_30d")),
+            "traded_volume_30d": _fmt_money(row.get("traded_volume_30d")),
             "pnl_class": "positive" if pnl > 0 else ("negative" if pnl < 0 else ""),
         })
     return result
@@ -1117,13 +1411,39 @@ def _admin_user_views(user: dict) -> list[dict]:
 def _admin_user_totals(rows: list[dict]) -> dict:
     active_users = sum(1 for row in rows if row.get("connection_status") == "active")
     total_pnl = sum(_float(row.get("cumulative_pnl_raw")) for row in rows)
+    traded_volume_30d = sum(_float(row.get("traded_volume_30d_raw")) for row in rows)
     return {
         "users_count": len(rows),
         "active_users_count": active_users,
         "total_pnl": total_pnl,
         "total_pnl_text": _fmt_money(total_pnl),
+        "traded_volume_30d": traded_volume_30d,
+        "traded_volume_30d_text": _fmt_money(traded_volume_30d),
         "pnl_class": "positive" if total_pnl > 0 else ("negative" if total_pnl < 0 else ""),
     }
+
+
+def _admin_pending_connection_views() -> list[dict]:
+    rows = fetch_all(
+        """
+        SELECT c.id, c.user_id, c.label, c.strategy_code, c.bybit_api_key, c.created_at,
+               u.email, u.nickname, u.telegram_username, u.plan, COALESCE(u.referral_verified, 0) AS referral_verified
+        FROM ai_user_connections c
+        JOIN ai_users u ON u.id = c.user_id
+        WHERE c.is_active=1
+          AND COALESCE(c.approval_status, 'approved') = 'pending'
+        ORDER BY c.created_at ASC, c.id ASC
+        """
+    )
+    return [
+        {
+            **row,
+            "api_key_masked": mask_secret(row.get("bybit_api_key")),
+            "strategy_name": STRATEGIES.get(row.get("strategy_code") or settings.DEFAULT_STRATEGY_CODE, STRATEGIES[settings.DEFAULT_STRATEGY_CODE]).name,
+            "created_at_display": _format_user_datetime(row.get("created_at"), None),
+        }
+        for row in rows
+    ]
 
 
 def _admin_griders_trade_rows(user: dict) -> list[dict]:
@@ -1169,9 +1489,7 @@ def _admin_griders_trade_totals(rows: list[dict]) -> dict:
     }
 
 
-def _admin_griders_trade_totals_from_db(user: dict) -> dict:
-    if not _user_access(user)["is_admin"]:
-        return _admin_griders_trade_totals([])
+def _griders_trade_totals_from_db() -> dict:
     row = fetch_one(
         """
         SELECT COUNT(*) AS trades_count, COALESCE(SUM(closed_pnl), 0) AS total_pnl
@@ -1188,9 +1506,13 @@ def _admin_griders_trade_totals_from_db(user: dict) -> dict:
     }
 
 
-def _admin_griders_trade_chart_rows(user: dict) -> list[dict]:
+def _admin_griders_trade_totals_from_db(user: dict) -> dict:
     if not _user_access(user)["is_admin"]:
-        return []
+        return _admin_griders_trade_totals([])
+    return _griders_trade_totals_from_db()
+
+
+def _griders_trade_chart_rows() -> list[dict]:
     rows = fetch_all(
         """
         SELECT closed_at, closed_pnl AS pnl
@@ -1208,13 +1530,17 @@ def _admin_griders_trade_chart_rows(user: dict) -> list[dict]:
     ]
 
 
-def _admin_griders_trade_chart_json(rows: list[dict], user: dict) -> str:
-    if not rows:
-        return "[]"
+def _admin_griders_trade_chart_rows(user: dict) -> list[dict]:
+    if not _user_access(user)["is_admin"]:
+        return []
+    return _griders_trade_chart_rows()
+
+
+def _griders_trade_chart_json(rows: list[dict], user: dict | None, start_date=None) -> str:
     user_tz = _user_zone(user)
     sorted_rows = sorted(rows, key=lambda item: item["closed_at"])
-    start = sorted_rows[0]["closed_at"].astimezone(user_tz).date()
-    end = sorted_rows[-1]["closed_at"].astimezone(user_tz).date()
+    start = start_date or datetime(2026, 6, 7).date()
+    end = max(datetime.now(user_tz).date(), sorted_rows[-1]["closed_at"].astimezone(user_tz).date()) if sorted_rows else datetime.now(user_tz).date()
     days = {}
     current = start
     while current <= end:
@@ -1247,13 +1573,12 @@ def _admin_griders_trade_chart_json(rows: list[dict], user: dict) -> str:
     return json.dumps(chart, ensure_ascii=False)
 
 
+def _admin_griders_trade_chart_json(rows: list[dict], user: dict) -> str:
+    return _griders_trade_chart_json(rows, user)
+
+
 def _griders_trade_strategy_label(strategy_code: str) -> str:
-    code = strategy_code.lower()
-    if code == "grid_dca_v2":
-        return "GRID DCA 2.8"
-    if code == "grid_dca_v3":
-        return "GRID DCA 3.1"
-    return strategy_code or "—"
+    return "GRID DCA 2.9"
 
 
 async def _refresh_admin_user_stats(
@@ -1327,7 +1652,7 @@ async def _run_admin_stats_refresh(force: bool = True, include_pnl_history: bool
 
 
 async def _admin_stats_loop() -> None:
-    await asyncio.sleep(60)
+    await asyncio.sleep(900)
     while True:
         try:
             await _refresh_admin_user_stats()
@@ -1337,7 +1662,7 @@ async def _admin_stats_loop() -> None:
 
 
 async def _daily_trade_stats_loop() -> None:
-    await asyncio.sleep(45)
+    await asyncio.sleep(600)
     while True:
         try:
             refresh_recent_daily_site_trade_stats()
@@ -1374,6 +1699,7 @@ async def _refresh_one_admin_user_stats(user_row: dict, include_pnl_history: boo
         FROM ai_user_connections c
         LEFT JOIN ai_user_strategy_settings s ON s.connection_id = c.id
         WHERE c.user_id=%s AND c.is_active=1
+          AND COALESCE(c.approval_status, 'approved') = 'approved'
         ORDER BY c.id
         """,
         (settings.DEFAULT_RISK_PCT, settings.DEFAULT_MIN_ORDER_VOLUME, user_id),
@@ -1578,7 +1904,12 @@ async def set_language(request: Request, lang: str):
 async def index(request: Request):
     if current_user(request):
         return RedirectResponse("/dashboard", status_code=303)
-    return render(request, "landing.html")
+    return render(request, "landing.html", _public_analytics_context())
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
 
 
 @app.get("/docs", response_class=HTMLResponse)
@@ -1608,26 +1939,6 @@ async def personal_data_consent(request: Request):
     return render(request, "personal_data_consent.html")
 
 
-@app.post("/integrations/telegram/market-shock/{secret}", include_in_schema=False)
-async def telegram_market_shock(secret: str, request: Request):
-    if not settings.TELEGRAM_WEBHOOK_SECRET or secret != settings.TELEGRAM_WEBHOOK_SECRET:
-        return Response(status_code=404)
-    if not MARKET_SHOCK_PROCESSING_ENABLED:
-        return {"ok": True, "processed": False, "reason": "MarketShock processing is temporarily disabled"}
-    update = await request.json()
-    if market_shock_queue is None:
-        asyncio.create_task(handle_telegram_update(update))
-        return {"ok": True, "queued": True, "fallback": "task"}
-    dropped = _trim_market_shock_queue_if_needed()
-    try:
-        market_shock_queue.put_nowait(update)
-    except asyncio.QueueFull:
-        logger.warning("Telegram MarketShock queue is full")
-        dropped += _drop_old_queue_items(market_shock_queue, MARKET_SHOCK_QUEUE_KEEP)
-        market_shock_queue.put_nowait(update)
-    return {"ok": True, "queued": True, "dropped_stale": dropped}
-
-
 @app.post("/integrations/telegram/tariffs/{secret}", include_in_schema=False)
 async def telegram_tariffs(secret: str, request: Request):
     if not settings.TELEGRAM_TARIFF_WEBHOOK_SECRET or secret != settings.TELEGRAM_TARIFF_WEBHOOK_SECRET:
@@ -1640,7 +1951,11 @@ async def telegram_tariffs(secret: str, request: Request):
 async def tradingview_grid_dca(secret: str, request: Request):
     if not settings.TRADINGVIEW_WEBHOOK_SECRET or secret != settings.TRADINGVIEW_WEBHOOK_SECRET:
         return Response(status_code=404)
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except ClientDisconnect:
+        logger.warning("TradingView GRID DCA webhook client disconnected before payload was read")
+        return Response(status_code=499)
     if tradingview_grid_queue is None:
         logger.error("TradingView GRID DCA queue is not initialized")
         return Response(status_code=503)
@@ -1768,8 +2083,8 @@ async def register(
     user_id = execute(
         """
         INSERT INTO ai_users
-        (email, password_hash, role, plan, personal_data_consent_at, terms_accepted_at)
-        VALUES (%s, %s, 'user', 'free', NOW(), NOW())
+        (email, password_hash, role, plan, free_plan_started_at, personal_data_consent_at, terms_accepted_at)
+        VALUES (%s, %s, 'user', 'free', NOW(), NOW(), NOW())
         """,
         (email, hash_password(password)),
     )
@@ -1969,6 +2284,49 @@ async def admin_analytics_page(request: Request):
     return render(request, "admin_analytics.html", _admin_analytics_context(user, success=success))
 
 
+@app.get("/admin/controls", response_class=HTMLResponse)
+async def admin_controls_page(request: Request):
+    user = _session_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not _user_access(user)["is_admin"]:
+        return RedirectResponse("/dashboard", status_code=303)
+    success = request.query_params.get("success") or ""
+    error = request.query_params.get("error") or ""
+    return render(request, "admin_controls.html", _admin_controls_context(user, success=success, error=error))
+
+
+@app.post("/admin/controls/side-block")
+async def admin_set_side_block(request: Request, side: str = Form(...), hours: str = Form(...)):
+    user = _session_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not _user_access(user)["is_admin"]:
+        return RedirectResponse("/dashboard", status_code=303)
+    try:
+        value = float(str(hours).replace(",", "."))
+        if value <= 0:
+            raise ValueError
+        set_side_block(side, value, int(user["id"]))
+    except Exception:
+        return RedirectResponse("/admin/controls?error=bad_hours", status_code=303)
+    return RedirectResponse(f"/admin/controls?success={side}_blocked", status_code=303)
+
+
+@app.post("/admin/controls/side-block/clear")
+async def admin_clear_side_block(request: Request, side: str = Form(...)):
+    user = _session_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not _user_access(user)["is_admin"]:
+        return RedirectResponse("/dashboard", status_code=303)
+    try:
+        clear_side_block(side)
+    except Exception:
+        return RedirectResponse("/admin/controls?error=bad_side", status_code=303)
+    return RedirectResponse(f"/admin/controls?success={side}_cleared", status_code=303)
+
+
 @app.get("/admin/users/{target_user_id}/view")
 async def admin_view_user_profile(request: Request, target_user_id: int):
     viewer = _session_user(request)
@@ -2056,6 +2414,7 @@ async def change_profile_telegram(request: Request, telegram_username: str = For
         UPDATE ai_users
         SET telegram_username=%s, telegram_user_id=NULL, telegram_verified_at=NULL,
             telegram_last_checked_at=NULL,
+            free_plan_started_at=IF(role='admin', free_plan_started_at, NOW()),
             plan=IF(role='admin', plan, 'free')
         WHERE id=%s
         """,
@@ -2085,7 +2444,7 @@ async def admin_update_user_plans(request: Request):
     if not _user_access(user)["is_admin"]:
         return RedirectResponse("/profile", status_code=303)
     form = await request.form()
-    rows = fetch_all("SELECT id, role FROM ai_users ORDER BY created_at DESC, id DESC")
+    rows = fetch_all("SELECT id, role, plan FROM ai_users ORDER BY created_at DESC, id DESC")
     for row in rows:
         user_id = int(row["id"])
         if row.get("role") == "admin":
@@ -2095,11 +2454,38 @@ async def admin_update_user_plans(request: Request):
         submitted = next((value for value in values if value in BASE_PLAN_OPTIONS), "free")
         plan = _base_plan(submitted)
         referral_verified = 1 if form.get(f"referral_{user_id}") == "1" else 0
+        reset_free_started = plan == "free" and str(row.get("plan") or "free") != "free" and not referral_verified
         execute(
-            "UPDATE ai_users SET plan=%s, referral_verified=%s WHERE id=%s",
-            (plan, referral_verified, user_id),
+            """
+            UPDATE ai_users
+            SET plan=%s,
+                referral_verified=%s,
+                free_plan_started_at=IF(%s=1, NOW(), free_plan_started_at)
+            WHERE id=%s
+            """,
+            (plan, referral_verified, 1 if reset_free_started else 0, user_id),
         )
     return RedirectResponse("/admin/analytics?success=plans", status_code=303)
+
+
+@app.post("/admin/connections/approve")
+async def admin_approve_connection(request: Request, connection_id: int = Form(...)):
+    user = require_user(request)
+    if isinstance(user, RedirectResponse):
+        return user
+    if not _user_access(user)["is_admin"]:
+        return RedirectResponse("/dashboard", status_code=303)
+    execute(
+        """
+        UPDATE ai_user_connections
+        SET approval_status='approved',
+            approved_at=UTC_TIMESTAMP(),
+            last_error=NULL
+        WHERE id=%s AND is_active=1
+        """,
+        (int(connection_id),),
+    )
+    return RedirectResponse("/admin/analytics?success=connection_approved", status_code=303)
 
 
 @app.post("/profile/admin/users/delete")
@@ -2311,6 +2697,7 @@ async def dashboard(request: Request):
         "unprotected_positions": unprotected_positions,
         "override_success": override_success,
         "signals": [_signal_view(row, _lang(request), user) for row in ai_signals],
+        **_public_analytics_context(user),
     })
     _remember_connection(response, selected_id)
     return response
@@ -2325,7 +2712,17 @@ async def connections_page(request: Request):
     if request.query_params.get("tested") == "1":
         success = _t(request, "connections", "api_valid")
     if request.query_params.get("saved") == "1":
-        success = _t(request, "common", "saved")
+        success = (
+            "Подключение сохранено. Теперь откройте раздел «Стратегии», выберите пары и включите автоторговлю."
+            if _lang(request) == "ru"
+            else "Connection saved. Now open Strategies, choose pairs, and enable auto trading."
+        )
+    if request.query_params.get("saved") == "pending":
+        success = (
+            "Подключение создано. Для запуска подключения отправьте администратору скриншот из Cryptorg, где видно API ключ и почту вашего аккаунта."
+            if _lang(request) == "ru"
+            else "Connection created. To launch it, send the administrator a Cryptorg screenshot showing the API key and your account email."
+        )
     if request.query_params.get("deleted") == "1":
         success = "Подключение удалено." if _lang(request) == "ru" else "Connection deleted."
     error = None
@@ -2345,7 +2742,7 @@ async def connections_page(request: Request):
     creating_new = request.query_params.get("new") == "1"
     uid = int(user["id"])
     connections = _connections(uid)
-    connection_locked = _referral_verified(user) and not _user_access(user)["is_admin"]
+    connection_locked = _referral_verified(user) and not _user_access(user)["is_admin"] and not _premium_plus_connections_unlocked(user)
     can_create_connection = False if connection_locked else _can_create_connection(user, connections)
     if creating_new and not can_create_connection:
         creating_new = False
@@ -2359,6 +2756,7 @@ async def connections_page(request: Request):
             "creating_new": creating_new or not selected,
             "can_create_connection": can_create_connection,
             "connection_locked": connection_locked,
+            "connection_limit": _connection_limit(user),
             "strategies": _available_strategies(user),
             "success": success,
             "error": error,
@@ -2382,7 +2780,7 @@ async def save_connections(
     user = require_user(request)
     if isinstance(user, RedirectResponse):
         return user
-    if _referral_verified(user) and not _user_access(user)["is_admin"]:
+    if _referral_verified(user) and not _user_access(user)["is_admin"] and not _premium_plus_connections_unlocked(user):
         return RedirectResponse("/connections?locked=referral", status_code=303)
     uid = int(user["id"])
     current = _connection(uid, connection_id) if connection_id else None
@@ -2418,6 +2816,7 @@ async def save_connections(
                 "creating_new": not bool(current),
                 "can_create_connection": _can_create_connection(user),
                 "connection_locked": False,
+                "connection_limit": _connection_limit(user),
                 "strategies": _available_strategies(user),
                 "error": _t(request, "connections", "api_key_in_use"),
             },
@@ -2433,6 +2832,7 @@ async def save_connections(
                 "creating_new": False,
                 "can_create_connection": _can_create_connection(user),
                 "connection_locked": False,
+                "connection_limit": _connection_limit(user),
                 "strategies": _available_strategies(user),
                 "error": _t(request, "connections", "secret_required"),
             },
@@ -2451,20 +2851,28 @@ async def save_connections(
             (label.strip() or "Main account", strategy_code, new_api_key, encrypted_secret, encrypted_webhook, int(current["id"]), uid),
         )
         saved_connection_id = int(current["id"])
+        saved_pending = str(current.get("approval_status") or "approved") == "pending"
     else:
+        existing_connections = _connections(uid)
+        approval_status = "approved"
+        if not _user_access(user)["is_admin"] and _effective_plan(user) == "premium_plus" and len(existing_connections) >= 1:
+            approval_status = "pending"
         saved_connection_id = execute(
             """
-            INSERT INTO ai_user_connections (user_id, label, strategy_code, bybit_api_key, bybit_api_secret_encrypted, webhook_url_encrypted)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO ai_user_connections
+            (user_id, label, strategy_code, bybit_api_key, bybit_api_secret_encrypted, webhook_url_encrypted, approval_status, approved_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CASE WHEN %s='approved' THEN UTC_TIMESTAMP() ELSE NULL END)
             """,
-            (uid, label.strip() or "Main account", strategy_code, new_api_key, encrypted_secret, encrypted_webhook),
+            (uid, label.strip() or "Main account", strategy_code, new_api_key, encrypted_secret, encrypted_webhook, approval_status, approval_status),
         )
+        saved_pending = approval_status == "pending"
     _ensure_strategy_defaults(uid, saved_connection_id, strategy_code)
     execute(
         "UPDATE ai_user_strategy_settings SET strategy_code=%s WHERE user_id=%s AND connection_id=%s",
         (strategy_code, uid, saved_connection_id),
     )
-    response = RedirectResponse(f"/connections?connection_id={saved_connection_id}&saved=1", status_code=303)
+    saved_value = "pending" if saved_pending else "1"
+    response = RedirectResponse(f"/connections?connection_id={saved_connection_id}&saved={saved_value}", status_code=303)
     _remember_connection(response, saved_connection_id)
     return response
 
@@ -2613,10 +3021,7 @@ async def save_strategy(
         _remember_connection(response, int(connection["id"]))
         return response
     _ensure_strategy_defaults(uid, int(connection["id"]), strategy_code)
-    if strategy_code in {"market_shock_impulse_v1", "market_shock_reversal_dca_v21"}:
-        selected_pairs = list(settings.MARKET_SHOCK_ALLOWED_PAIRS)
-    else:
-        selected_pairs = _normalize_pair_selection(watchlist)
+    selected_pairs = _normalize_pair_selection(watchlist)
     max_risk_pct = float(limits.get("max_risk_pct") or settings.MAX_STRATEGY_RISK_PCT)
     risk_pct = min(max_risk_pct, max(1.0, float(risk_pct)))
     leverage = 10
@@ -2754,11 +3159,6 @@ async def ai_signals_page(request: Request):
 @app.post("/signals/scan")
 async def manual_scan(request: Request):
     return Response(status_code=404)
-    user = require_user(request)
-    if isinstance(user, RedirectResponse):
-        return user
-    await scan_once()
-    return RedirectResponse("/signals", status_code=303)
 
 
 @app.post("/risk/override")
@@ -2812,7 +3212,6 @@ async def override_risk_pause(request: Request, pause_type: str = Form(""), pair
             """,
             (uid, int(ends_at_ms / 1000), pause["reason"]),
         )
-        await scan_once()
         return RedirectResponse("/dashboard?override=1", status_code=303)
     return RedirectResponse("/dashboard", status_code=303)
 
@@ -2854,7 +3253,7 @@ async def send_signal(request: Request, signal_id: int):
                 (json.dumps([cooldown_reason], ensure_ascii=False), cooldown_reason, signal_id),
             )
             return RedirectResponse("/signals", status_code=303)
-        if (row.get("strategy_code") or "") in {"grid_dca_v2", "grid_dca_v3"} and (row.get("side") or "") in {"long", "short"}:
+        if (row.get("strategy_code") or "") == settings.DEFAULT_STRATEGY_CODE and (row.get("side") or "") in {"long", "short"}:
             cooldown_reason = reserve_strategy_side_launch(
                 int(user["id"]),
                 int(row["connection_id"] or 0),
@@ -2877,7 +3276,7 @@ async def send_signal(request: Request, signal_id: int):
         error_message = ghost_webhook.failure_message(result) if status == "failed" else None
         if status == "failed":
             release_pair_launch(int(user["id"]), int(conn["id"]), row.get("pair") or "")
-            if (row.get("strategy_code") or "") in {"grid_dca_v2", "grid_dca_v3"}:
+            if (row.get("strategy_code") or "") == settings.DEFAULT_STRATEGY_CODE:
                 release_strategy_side_launch(
                     int(user["id"]),
                     int(row["connection_id"] or 0),
@@ -3013,22 +3412,24 @@ def _remember_connection(response: Response, connection_id: int | None) -> None:
         response.set_cookie(SELECTED_CONNECTION_COOKIE, str(int(connection_id)), max_age=settings.SESSION_MAX_AGE, httponly=False, samesite="lax")
 
 
+def _account_cache_max_age_seconds() -> int:
+    return max(60, int(settings.GRID_DCA_ACCOUNT_CACHE_MAX_AGE_SECONDS))
+
+
 async def _dashboard_unprotected_position_alerts(connections: list[dict]) -> list[dict]:
     alerts: list[dict] = []
     for conn in connections:
-        api_key = conn.get("bybit_api_key") or ""
-        api_secret_encrypted = conn.get("bybit_api_secret_encrypted")
-        if not api_key or not api_secret_encrypted:
+        checked_at = _as_utc_datetime(conn.get("last_positions_checked_at"))
+        if not checked_at:
             continue
-        try:
-            api_secret = decrypt_secret(api_secret_encrypted)
-        except Exception:
+        if (datetime.now(timezone.utc) - checked_at).total_seconds() > _account_cache_max_age_seconds():
             continue
-        if not api_secret:
+        rows = _json_loads(conn.get("last_positions_snapshot"), [])
+        orders_by_pair = _json_loads(conn.get("last_open_orders_snapshot"), {})
+        orders_checked_at = _as_utc_datetime(conn.get("last_open_orders_checked_at"))
+        if not orders_checked_at:
             continue
-        try:
-            rows = await asyncio.wait_for(positions(api_key, api_secret), timeout=12)
-        except Exception:
+        if (datetime.now(timezone.utc) - orders_checked_at).total_seconds() > OPEN_ORDERS_ALERT_CACHE_SECONDS:
             continue
         for position in rows:
             if not _dashboard_position_is_open(position):
@@ -3038,9 +3439,8 @@ async def _dashboard_unprotected_position_alerts(connections: list[dict]) -> lis
                 continue
             side = _dashboard_position_side(position)
             has_take_profit = bool(str(position.get("takeProfit") or "").strip())
-            try:
-                orders = await asyncio.wait_for(open_orders(api_key, api_secret, pair), timeout=12)
-            except Exception:
+            orders = orders_by_pair.get(pair) if isinstance(orders_by_pair, dict) else []
+            if not isinstance(orders, list):
                 orders = []
             has_close_order = _dashboard_has_close_order(orders, side)
             if has_take_profit or has_close_order:
@@ -3225,14 +3625,44 @@ async def _confirm_position_opened(conn: dict, pair: str, side: str) -> bool:
 
 def _monitoring_dates(request: Request, user: dict | None = None, conn: dict | None = None) -> tuple[str, str]:
     today = datetime.now(_user_zone(user)).date()
-    registered = _user_registered_date(user) or today
-    first_trade_start = _monitoring_first_trade_start(user, conn)
-    default_start = first_trade_start or max(registered, MONITORING_DATA_START_DATE)
-    start = _parse_date(request.query_params.get("start_date"), default_start)
+    default_start = _monitoring_saved_start_date(user, conn)
+    if default_start is None:
+        registered = _user_registered_date(user) or today
+        first_trade_start = _monitoring_first_trade_start(user, conn)
+        default_start = first_trade_start or max(registered, MONITORING_DATA_START_DATE)
+    requested_start = request.query_params.get("start_date")
+    start = _parse_date(requested_start, default_start)
     end = _parse_date(request.query_params.get("end_date"), today)
     if start > end:
         start, end = end, start
+    if requested_start and user and conn:
+        _save_monitoring_start_date(int(user["id"]), int(conn["id"]), start)
     return start.isoformat(), end.isoformat()
+
+
+def _monitoring_saved_start_date(user: dict | None, conn: dict | None) -> object | None:
+    if not user or not conn:
+        return None
+    row = fetch_one(
+        """
+        SELECT start_date
+        FROM ai_monitoring_preferences
+        WHERE user_id=%s AND connection_id=%s
+        """,
+        (int(user["id"]), int(conn["id"])),
+    )
+    return row.get("start_date") if row else None
+
+
+def _save_monitoring_start_date(user_id: int, connection_id: int, start_date) -> None:
+    execute(
+        """
+        INSERT INTO ai_monitoring_preferences (user_id, connection_id, start_date)
+        VALUES (%s, %s, %s)
+        ON DUPLICATE KEY UPDATE start_date=VALUES(start_date)
+        """,
+        (user_id, connection_id, start_date.isoformat()),
+    )
 
 
 def _monitoring_first_trade_start(user: dict | None, conn: dict | None) -> object | None:
@@ -3277,7 +3707,8 @@ async def _monitoring_snapshot(conn: dict, start_date: str, end_date: str, user:
         raise ValueError("Для мониторинга нужно сохранить read-only API ключ и секрет Cryptorg.")
 
     user_tz = _user_zone(user)
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=user_tz).astimezone(timezone.utc)
+    chart_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    start_dt = datetime.combine(chart_start, datetime.min.time()).replace(tzinfo=user_tz).astimezone(timezone.utc)
     end_dt = (
         (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1))
         .replace(tzinfo=user_tz)
@@ -3310,12 +3741,13 @@ async def _monitoring_snapshot(conn: dict, start_date: str, end_date: str, user:
     daily, summary = _griders_daily_summary_pnl(int(conn["user_id"]), int(conn["id"]), start_dt, end_dt, start_date, end_date, user)
     total_pnl = summary["total_pnl"]
     total_trades = summary["total_trades"]
+    traded_volume = summary["traded_volume"]
     wins = summary["wins"]
     start_balance = balance - total_pnl
     if start_balance <= 0:
         start_balance = balance
     period_return = (total_pnl / start_balance * 100) if start_balance > 0 else 0.0
-    days = max(1, (datetime.strptime(end_date, "%Y-%m-%d").date() - datetime.strptime(start_date, "%Y-%m-%d").date()).days + 1)
+    days = max(1, (datetime.strptime(end_date, "%Y-%m-%d").date() - chart_start).days + 1)
     return {
         "balance": _fmt_money(balance),
         "positions": active_positions,
@@ -3336,6 +3768,8 @@ async def _monitoring_snapshot(conn: dict, start_date: str, end_date: str, user:
         "summary": {
             "total_pnl": _fmt_money(total_pnl),
             "total_pnl_raw": total_pnl,
+            "traded_volume": _fmt_money(traded_volume),
+            "traded_volume_raw": traded_volume,
             "total_trades": total_trades,
             "win_rate": _fmt_percent((wins / total_trades * 100) if total_trades else 0),
             "avg_day": _fmt_money(total_pnl / days),
@@ -3344,7 +3778,7 @@ async def _monitoring_snapshot(conn: dict, start_date: str, end_date: str, user:
             "unrealised_pnl": _fmt_money(sum(item["unrealised_pnl_raw"] for item in active_positions)),
             "margin_used": _fmt_money(sum(item["margin_raw"] for item in active_positions)),
         },
-    }
+}
 
 
 async def _closed_pnl_period(api_key: str, api_secret: str, start_ms: int, end_ms: int) -> list[dict]:
@@ -3436,7 +3870,7 @@ async def _sync_recent_griders_closed_deals_for_monitoring(
 
 
 async def _griders_open_deal_sync_loop() -> None:
-    await asyncio.sleep(30)
+    await asyncio.sleep(900)
     while True:
         try:
             await _sync_open_griders_deals_once()
@@ -3445,7 +3879,7 @@ async def _griders_open_deal_sync_loop() -> None:
         await asyncio.sleep(max(60, GRIDERS_OPEN_DEAL_SYNC_SECONDS))
 
 
-async def _sync_open_griders_deals_once(limit_connections: int = 30) -> int:
+async def _sync_open_griders_deals_once(limit_connections: int = 5) -> int:
     rows = fetch_all(
         """
         SELECT
@@ -3457,7 +3891,16 @@ async def _sync_open_griders_deals_once(limit_connections: int = 30) -> int:
             COUNT(*) AS open_deals
         FROM ai_site_trade_deals d
         JOIN ai_user_connections c ON c.id=d.connection_id AND c.is_active=1
-        WHERE d.status='open'
+          AND COALESCE(c.approval_status, 'approved') = 'approved'
+        WHERE (
+            d.status='open'
+            OR (
+                d.status='canceled'
+                AND d.close_order_type='phantom_open_cleanup'
+                AND d.closed_at IS NULL
+                AND d.sent_at >= UTC_TIMESTAMP() - INTERVAL 14 DAY
+            )
+          )
           AND d.sent_at <= UTC_TIMESTAMP() - INTERVAL 2 MINUTE
           AND c.bybit_api_key <> ''
           AND c.bybit_api_secret_encrypted IS NOT NULL
@@ -3645,6 +4088,16 @@ def _griders_monitoring_summary(user_id: int, connection_id: int, start_dt: date
         """
         SELECT COUNT(*) AS total_trades,
                COALESCE(SUM(closed_pnl), 0) AS total_pnl,
+               COALESCE(SUM(
+                   COALESCE(api_entry_value, 0)
+                   + CASE
+                       WHEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0)) > 0
+                         THEN ABS(COALESCE(qty, 0) * COALESCE(avg_exit_price, 0))
+                       WHEN COALESCE(api_entry_value, 0) > 0
+                         THEN COALESCE(api_entry_value, 0)
+                       ELSE 0
+                     END
+               ), 0) AS traded_volume,
                SUM(CASE WHEN closed_pnl > 0 THEN 1 ELSE 0 END) AS wins
         FROM ai_site_trade_deals
         WHERE user_id=%s
@@ -3663,6 +4116,7 @@ def _griders_monitoring_summary(user_id: int, connection_id: int, start_dt: date
     return {
         "total_trades": int(row.get("total_trades") or 0),
         "total_pnl": _float(row.get("total_pnl")),
+        "traded_volume": _float(row.get("traded_volume")),
         "wins": int(row.get("wins") or 0),
     }
 
@@ -3678,7 +4132,7 @@ def _griders_daily_summary_pnl(
 ) -> tuple[list[dict], dict]:
     rows = fetch_all(
         """
-        SELECT closed_at, closed_pnl
+        SELECT closed_at, closed_pnl, api_entry_value, qty, avg_exit_price
         FROM ai_site_trade_deals
         WHERE user_id=%s
           AND connection_id <=> %s
@@ -3696,10 +4150,12 @@ def _griders_daily_summary_pnl(
     )
     closed = []
     total_pnl = 0.0
+    traded_volume = 0.0
     wins = 0
     for row in rows:
         closed_at = _as_utc_datetime(row.get("closed_at"))
         pnl = _float(row.get("closed_pnl"))
+        traded_volume += _closed_trade_volume(row)
         total_pnl += pnl
         if pnl > 0:
             wins += 1
@@ -3710,6 +4166,7 @@ def _griders_daily_summary_pnl(
     return _daily_pnl(closed, start_date, end_date, user), {
         "total_trades": len(rows),
         "total_pnl": total_pnl,
+        "traded_volume": traded_volume,
         "wins": wins,
     }
 
@@ -3810,6 +4267,16 @@ def _closed_entry_value(row: dict) -> float:
     if value > 0:
         return value
     return abs(_float(row.get("qty")) * _float(row.get("avgEntryPrice")))
+
+
+def _closed_trade_volume(row: dict) -> float:
+    entry_value = _float(row.get("api_entry_value"))
+    exit_value = abs(_float(row.get("qty")) * _float(row.get("avg_exit_price")))
+    if entry_value > 0 and exit_value > 0:
+        return entry_value + exit_value
+    if entry_value > 0:
+        return entry_value * 2
+    return exit_value * 2 if exit_value > 0 else 0.0
 
 
 def _fmt_money(value: float) -> str:
@@ -3983,10 +4450,9 @@ async def _risk_pause_views(user_id: int, conn: dict | None, ignore_override: bo
     if not conn or not conn.get("bybit_api_key") or not conn.get("bybit_api_secret_encrypted"):
         return []
     pauses: list[dict] = []
-    if (conn.get("strategy_code") or settings.DEFAULT_STRATEGY_CODE) not in {"market_shock_impulse_v1", "market_shock_reversal_dca_v21"}:
-        generic = await _generic_risk_pause_view(user_id, conn, ignore_override=ignore_override)
-        if generic:
-            pauses.append(generic)
+    generic = await _generic_risk_pause_view(user_id, conn, ignore_override=ignore_override)
+    if generic:
+        pauses.append(generic)
     strategy_pauses = _strategy_pause_views(user_id, conn, ignore_override=ignore_override)
     grid_stop_pauses = _grid_dca_stop_pause_views(user_id, conn, ignore_override=ignore_override)
     pauses.extend(strategy_pauses)
@@ -4003,27 +4469,30 @@ async def _generic_risk_pause_view(user_id: int, conn: dict | None, ignore_overr
     ):
         return None
 
-    try:
-        secret = decrypt_secret(conn.get("bybit_api_secret_encrypted"))
-        wallet = await wallet_balance(conn.get("bybit_api_key") or "", secret)
-        balance = extract_usdt_balance(wallet)
-        status = await risk_pause_status(conn.get("bybit_api_key") or "", secret, balance)
-    except Exception:
+    status = _json_loads(conn.get("last_risk_pause_snapshot"), {})
+    checked_at = _as_utc_datetime(conn.get("last_risk_pause_checked_at"))
+    if not status or not checked_at:
         return None
-    if not status:
+    if (datetime.now(timezone.utc) - checked_at).total_seconds() > _account_cache_max_age_seconds():
         return None
+    ends_at_ms = int(status.get("ends_at_ms") or 0)
+    now_ms = int(time.time() * 1000)
+    if ends_at_ms <= now_ms:
+        return None
+    remaining = max(0, int((ends_at_ms - now_ms) / 1000))
     return {
         **status,
         "type": status.get("type") or "risk_pause",
         "title": "Пауза риска",
         "button_label": "Запустить стратегию сейчас",
-        "remaining_label": _format_duration(int(status.get("remaining_seconds") or 0)),
+        "remaining_seconds": remaining,
+        "remaining_label": _format_duration(remaining),
     }
 
 
 def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool = False) -> list[dict]:
     strategy_code = conn.get("strategy_code") or settings.DEFAULT_STRATEGY_CODE
-    if strategy_code not in {"grid_dca_v2", "grid_dca_v3"}:
+    if strategy_code != settings.DEFAULT_STRATEGY_CODE:
         return []
     connection_id = int(conn["id"])
     watchlist = set(_watchlist((_strategy(user_id, connection_id) or {}).get("watchlist") or ""))
@@ -4041,6 +4510,7 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
         if ends_at_ts <= now_ts:
             continue
         side = str(row.get("side") or "").lower()
+        side_pause_text = f"в направлении {side} " if side in {"long", "short"} else ""
         remaining = max(0, int(ends_at_ts - now_ts))
         pauses.append({
             "type": "strategy_pause",
@@ -4051,7 +4521,7 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
             "button_label": f"Запустить пару {pair}",
             "reason": (
                 f"GRID DCA: по {pair} {side} недавно был пробой сетки. "
-                "Новые входы по этой паре временно остановлены."
+                f"Новые входы по этой паре {side_pause_text}временно остановлены."
             ),
             "ends_at_ms": int(ends_at_ts * 1000),
             "ends_at": datetime.fromtimestamp(ends_at_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
@@ -4072,6 +4542,7 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
         if ends_at_ts <= now_ts:
             continue
         side = str(row.get("side") or "").lower()
+        side_pause_text = f"в направлении {side} " if side in {"long", "short"} else ""
         remaining = max(0, int(ends_at_ts - now_ts))
         pauses.append({
             "type": "strategy_pause",
@@ -4082,7 +4553,7 @@ def _grid_dca_stop_pause_views(user_id: int, conn: dict, ignore_override: bool =
             "button_label": f"Запустить пару {pair}",
             "reason": (
                 f"GRID DCA: по {pair} {side} был пробой сетки. "
-                "Новые входы по этой паре временно остановлены."
+                f"Новые входы по этой паре {side_pause_text}временно остановлены."
             ),
             "ends_at_ms": int(ends_at_ts * 1000),
             "ends_at": datetime.fromtimestamp(ends_at_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
@@ -4232,118 +4703,39 @@ def _connection_view(conn: dict | None) -> dict | None:
         "api_key_masked": mask_secret(conn.get("bybit_api_key")),
         "has_secret": bool(conn.get("bybit_api_secret_encrypted")),
         "has_webhook": bool(conn.get("webhook_url_encrypted")),
+        "approval_status": conn.get("approval_status") or "approved",
+        "is_pending_approval": (conn.get("approval_status") or "approved") == "pending",
     }
 
 
 def _strategy_meta_view(strategy_code: str, lang: str) -> dict:
-    code = strategy_code if strategy_code in STRATEGIES else settings.DEFAULT_STRATEGY_CODE
-    texts = {
-        "ru": {
-            "grid_dca_v2": {
-                "name": "GRID DCA 2.8",
-                "description": "Стратегия стадии рынка: адаптивная сетка усреднения по ATR, тейк-профит, стоп-лосс и лимиты активных сделок.",
-            },
-            "grid_dca_v3": {
-                "name": "GRID DCA 3.1",
-                "description": "Админская тестовая версия GRID DCA: более строгие входы, усиленный фильтр BTC/ETH, контроль импульсных свечей против сетки и адаптивная DCA-сетка.",
-            },
-            "market_shock_impulse_v1": {
-                "name": "MarketShok Impulse 2.0",
-                "description": "Пробойная стратегия по аномальному импульсу: движение от 3%, всплеск объёма, фильтр спреда и подтверждение продолжения.",
-            },
-            "market_shock_reversal_dca_v21": {
-                "name": "MarketShok Reversal DCA 3.0",
-                "description": "Экспериментальная стратегия для администратора: short после резкого роста как контр-импульс и short после резкого падения по продолжению, с адаптивными DCA-сеткой, TP и SL.",
-            },
-        },
-        "en": {
-            "grid_dca_v2": {
-                "name": "GRID DCA 2.8",
-                "description": STRATEGIES["grid_dca_v2"].description,
-            },
-            "grid_dca_v3": {
-                "name": "GRID DCA 3.1",
-                "description": STRATEGIES["grid_dca_v3"].description,
-            },
-            "market_shock_impulse_v1": {
-                "name": "MarketShok Impulse 2.0",
-                "description": STRATEGIES["market_shock_impulse_v1"].description,
-            },
-            "market_shock_reversal_dca_v21": {
-                "name": "MarketShok Reversal DCA 3.0",
-                "description": STRATEGIES["market_shock_reversal_dca_v21"].description,
-            },
-        },
-    }
-    text = texts.get(normalize_lang(lang), texts["ru"]).get(code, {})
-    return {"code": code, "name": text.get("name", STRATEGIES[code].name), "description": text.get("description", STRATEGIES[code].description)}
+    code = settings.DEFAULT_STRATEGY_CODE
+    description = (
+        "Стратегия стадии рынка: адаптивная сетка усреднения по ATR, тейк-профит, стоп-лосс и лимиты активных сделок."
+        if normalize_lang(lang) == "ru"
+        else STRATEGIES[code].description
+    )
+    return {"code": code, "name": STRATEGIES[code].name, "description": description}
 
 
 def _strategy_card_view(strategy_code: str, lang: str) -> dict:
-    code = strategy_code if strategy_code in STRATEGIES else settings.DEFAULT_STRATEGY_CODE
-    texts = {
-        "ru": {
-            "grid_dca_v2": {
-                "name": "GRID DCA 2.8",
-                "description": "Стратегия стадии рынка: адаптивная сетка усреднения по ATR, тейк-профит, стоп-лосс и лимиты активных сделок.",
-                "simple": "Подходит для спокойного рынка, откатов и участков, где цена ходит волнами. Сделка открывается с сеткой страховочных ордеров, чтобы усреднять вход.",
-                "profit": "Потенциал: умеренный, рассчитан на частые небольшие сделки.",
-                "risk": "Риск: средний. Главная опасность — сильный тренд против сетки.",
-            },
-            "grid_dca_v3": {
-                "name": "GRID DCA 3.1",
-                "description": "Более строгая тестовая версия GRID DCA. Доступна только администратору.",
-                "simple": "Использует те же пары и общий подход GRID DCA 2.8, но пропускает больше слабых входов: сильнее фильтрует BTC/ETH, объём, ATR, положение Bollinger Bands и импульсные свечи против сетки.",
-                "profit": "Потенциал: выше за счёт меньшего количества плохих входов, но сигналов будет меньше.",
-                "risk": "Риск: средний. Стратегия всё равно использует DCA и стоп-лосс, поэтому при сильном рынке против сетки возможны убытки.",
-            },
-            "market_shock_impulse_v1": {
-                "name": "MarketShok Impulse 2.0",
-                "description": "Пробойная стратегия по аномальному импульсу: движение от 3%, всплеск объёма, фильтр спреда и подтверждение продолжения.",
-                "simple": "Ищет резкий импульс на фьючерсах и пытается войти по направлению движения, если объём и лента сделок подтверждают продолжение.",
-                "profit": "Потенциал: высокий, но сигналов меньше и они резче.",
-                "risk": "Риск: высокий. Главная опасность — ложный пробой и быстрый откат.",
-            },
-            "market_shock_reversal_dca_v21": {
-                "name": "MarketShok Reversal DCA 3.0",
-                "description": "Short-biased DCA-стратегия по Market Shock. Доступна только администратору.",
-                "simple": "После резкого роста открывает short против перегрева, а после резкого падения открывает short по продолжению импульса. TP, SL и DCA-сетка адаптируются к силе движения.",
-                "profit": "Потенциал: высокий по бэктесту, но стратегия экспериментальная и требует отдельного аккаунта.",
-                "risk": "Риск: высокий. Главная опасность — резкий отскок против short-позиции или продолжение перегретого движения без отката.",
-            },
-        },
-        "en": {
-            "grid_dca_v2": {
-                "name": "GRID DCA 2.8",
-                "description": STRATEGIES["grid_dca_v2"].description,
-                "simple": "Best for calmer markets, pullbacks, and wave-like price action. It opens a deal with safety orders to average the entry.",
-                "profit": "Potential: moderate, focused on frequent smaller deals.",
-                "risk": "Risk: medium. The main danger is a strong trend against the grid.",
-            },
-            "grid_dca_v3": {
-                "name": "GRID DCA 3.1",
-                "description": STRATEGIES["grid_dca_v3"].description,
-                "simple": "Uses the same pairs and base idea as GRID DCA 2.8, but applies stricter BTC/ETH, volume, ATR, Bollinger, and impulse-candle filters.",
-                "profit": "Potential: higher filtering quality, but fewer signals.",
-                "risk": "Risk: medium. It still uses DCA and stop loss, so strong moves against the grid can produce losses.",
-            },
-            "market_shock_impulse_v1": {
-                "name": "MarketShok Impulse 2.0",
-                "description": STRATEGIES["market_shock_impulse_v1"].description,
-                "simple": "Looks for a sharp futures impulse and enters in the direction of the move when volume and trade flow confirm continuation.",
-                "profit": "Potential: high, but signals are rarer and sharper.",
-                "risk": "Risk: high. The main danger is a false breakout and fast reversal.",
-            },
-            "market_shock_reversal_dca_v21": {
-                "name": "MarketShok Reversal DCA 3.0",
-                "description": STRATEGIES["market_shock_reversal_dca_v21"].description,
-                "simple": "Shorts upward overextensions as a counter-impulse setup and shorts downward shocks as continuation. TP, SL, and the DCA grid adapt to impulse strength.",
-                "profit": "Potential: high in the backtest, but experimental and best used on a separate account.",
-                "risk": "Risk: high. The main danger is a sharp bounce against the short or an overheated move continuing without reversal.",
-            },
-        },
-    }
-    text = texts.get(normalize_lang(lang), texts["ru"]).get(code, {})
+    code = settings.DEFAULT_STRATEGY_CODE
+    if normalize_lang(lang) == "ru":
+        text = {
+            "name": "GRID DCA 2.9",
+            "description": "Стратегия стадии рынка: адаптивная сетка усреднения по ATR, тейк-профит по стадии рынка, расширенный стоп-лосс и лимиты активных сделок.",
+            "simple": "Подходит для спокойного рынка, откатов и участков, где цена ходит волнами. Сделка открывается с сеткой страховочных ордеров, чтобы усреднять вход.",
+            "profit": "Потенциал: умеренный, рассчитан на частые небольшие сделки.",
+            "risk": "Риск: средний. Главная опасность — сильный тренд против сетки.",
+        }
+    else:
+        text = {
+            "name": "GRID DCA 2.9",
+            "description": STRATEGIES[code].description,
+            "simple": "Best for calmer markets, pullbacks, and wave-like price action. It opens a deal with safety orders to average the entry.",
+            "profit": "Potential: moderate, focused on frequent smaller deals.",
+            "risk": "Risk: medium. The main danger is a strong trend against the grid.",
+        }
     return {
         "code": code,
         "name": text.get("name", STRATEGIES[code].name),
@@ -4479,6 +4871,15 @@ def _datetime_to_utc_iso(value) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).isoformat()
+
+
+def _json_loads(value, default):
+    try:
+        if not value:
+            return default
+        return json.loads(value)
+    except Exception:
+        return default
 
 
 def _prune_user_signals(user_id: int) -> None:
