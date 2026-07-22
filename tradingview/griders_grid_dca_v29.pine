@@ -1,0 +1,157 @@
+//@version=6
+indicator("Griders GRID DCA 2.9", overlay=true, max_labels_count=500)
+
+bbLength = input.int(20, "Bollinger length", minval=5, maxval=100)
+bbMult = input.float(2.0, "Bollinger multiplier", minval=0.5, step=0.1)
+rsiLength = input.int(14, "RSI length", minval=2, maxval=100)
+atrLength = input.int(14, "ATR length", minval=2, maxval=100)
+emaFastLength = input.int(9, "Fast EMA", minval=1, maxval=100)
+emaMidLength = input.int(21, "Mid EMA", minval=2, maxval=200)
+emaSlowLength = input.int(50, "Slow EMA", minval=5, maxval=300)
+volumeLength = input.int(30, "Volume baseline", minval=5, maxval=200)
+minVolumeRatio = input.float(0.45, "GRID 2.9 min volume ratio", minval=0.1, step=0.05)
+maxAtrPct = input.float(4.0, "GRID 2.9 max ATR, %", minval=0.1, step=0.1)
+maxBbWidthPct = input.float(3.5, "GRID 2.9 range BB width, %", minval=0.1, step=0.1)
+useMacroFilter = input.bool(true, "Use BTC/ETH market guard")
+btcSymbol = input.symbol("BYBIT:BTCUSDT.P", "BTC futures symbol")
+ethSymbol = input.symbol("BYBIT:ETHUSDT.P", "ETH futures symbol")
+macroMove1Limit = input.float(0.8, "GRID 2.9 BTC/ETH 1-bar guard, %", minval=0.1, step=0.1)
+macroMove3Limit = input.float(1.2, "GRID 2.9 BTC/ETH 3-bar guard, %", minval=0.1, step=0.1)
+useGlobalTrendFilter = input.bool(true, "Use BTC/ETH daily trend direction filter")
+globalTrendMove3Limit = input.float(1.5, "Daily trend 3-day move threshold, %", minval=0.1, step=0.1)
+globalTrendBlockNeutral = input.bool(false, "Block signals in neutral daily trend")
+useDailyEma20Guard = input.bool(true, "Use server BTC/ETH daily EMA20 guard")
+maxLongRedCandlePct = input.float(0.7, "GRID 2.9 block long red candle, %", minval=0.1, step=0.1)
+maxShortGreenCandlePct = input.float(0.7, "GRID 2.9 block short green candle, %", minval=0.1, step=0.1)
+
+emaFast = ta.ema(close, emaFastLength)
+emaMid = ta.ema(close, emaMidLength)
+emaSlow = ta.ema(close, emaSlowLength)
+rsi = ta.rsi(close, rsiLength)
+rsi15 = request.security(syminfo.tickerid, "15", ta.rsi(close, rsiLength))
+rsi60 = request.security(syminfo.tickerid, "60", ta.rsi(close, rsiLength))
+atrPct = ta.atr(atrLength) / close * 100.0
+volumeRatio = volume / ta.sma(volume, volumeLength)
+candlePct = open > 0 ? (close - open) / open * 100.0 : 0.0
+barMovePct = close[1] > 0 ? (close - close[1]) / close[1] * 100.0 : 0.0
+
+bbBasis = ta.sma(close, bbLength)
+bbDev = bbMult * ta.stdev(close, bbLength)
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+bbWidthPct = bbBasis > 0 ? (bbUpper - bbLower) / bbBasis * 100.0 : 0.0
+bbPosition = (bbUpper - bbLower) > 0 ? (close - bbLower) / (bbUpper - bbLower) * 100.0 : 50.0
+
+bullTrend = emaFast > emaMid and emaMid > emaSlow
+bearTrend = emaFast < emaMid and emaMid < emaSlow
+rangeMarket = not bullTrend and not bearTrend and bbWidthPct <= maxBbWidthPct
+
+btcMove1 = request.security(btcSymbol, timeframe.period, close[1] > 0 ? (close - close[1]) / close[1] * 100.0 : 0.0)
+btcMove3 = request.security(btcSymbol, timeframe.period, close[3] > 0 ? (close - close[3]) / close[3] * 100.0 : 0.0)
+ethMove1 = request.security(ethSymbol, timeframe.period, close[1] > 0 ? (close - close[1]) / close[1] * 100.0 : 0.0)
+ethMove3 = request.security(ethSymbol, timeframe.period, close[3] > 0 ? (close - close[3]) / close[3] * 100.0 : 0.0)
+
+btcDailyClose = request.security(btcSymbol, "1D", close)
+ethDailyClose = request.security(ethSymbol, "1D", close)
+btcDailyEma20 = request.security(btcSymbol, "1D", ta.ema(close, 20))
+ethDailyEma20 = request.security(ethSymbol, "1D", ta.ema(close, 20))
+btcDailyMove3 = request.security(btcSymbol, "1D", close[3] > 0 ? (close - close[3]) / close[3] * 100.0 : 0.0)
+ethDailyMove3 = request.security(ethSymbol, "1D", close[3] > 0 ? (close - close[3]) / close[3] * 100.0 : 0.0)
+globalDailyMove3 = (btcDailyMove3 + ethDailyMove3) / 2.0
+globalUptrend = (btcDailyClose > btcDailyEma20 and ethDailyClose > ethDailyEma20) or globalDailyMove3 >= globalTrendMove3Limit
+globalDowntrend = (btcDailyClose < btcDailyEma20 and ethDailyClose < ethDailyEma20) or globalDailyMove3 <= -globalTrendMove3Limit
+globalMarketRegime = globalUptrend and not globalDowntrend ? "uptrend" : globalDowntrend and not globalUptrend ? "downtrend" : "neutral"
+btcDailyAboveEma20 = btcDailyClose > btcDailyEma20
+ethDailyAboveEma20 = ethDailyClose > ethDailyEma20
+serverLongEma20Block = useDailyEma20Guard and not btcDailyAboveEma20 and not ethDailyAboveEma20
+serverShortEma20Block = useDailyEma20Guard and btcDailyAboveEma20 and ethDailyAboveEma20
+globalLongBlock = (useGlobalTrendFilter and (globalMarketRegime == "downtrend" or (globalTrendBlockNeutral and globalMarketRegime == "neutral"))) or serverLongEma20Block
+globalShortBlock = (useGlobalTrendFilter and (globalMarketRegime == "uptrend" or (globalTrendBlockNeutral and globalMarketRegime == "neutral"))) or serverShortEma20Block
+
+macroLongBlock = useMacroFilter and (btcMove1 <= -macroMove1Limit or ethMove1 <= -macroMove1Limit or btcMove3 <= -macroMove3Limit or ethMove3 <= -macroMove3Limit)
+macroShortBlock = useMacroFilter and (btcMove1 >= macroMove1Limit or ethMove1 >= macroMove1Limit or btcMove3 >= macroMove3Limit or ethMove3 >= macroMove3Limit)
+longBreakdown = bbPosition < 0 or candlePct <= -maxLongRedCandlePct or (barMovePct <= -maxLongRedCandlePct and volumeRatio >= 1.4) or (close < bbLower and volumeRatio >= 1.0)
+shortBreakout = bbPosition > 100 or candlePct >= maxShortGreenCandlePct or (barMovePct >= maxShortGreenCandlePct and volumeRatio >= 1.4) or (close > bbUpper and volumeRatio >= 1.0)
+
+longRsiFilter = rsi15 >= 42 and rsi15 <= 58 and rsi60 >= 42 and rsi60 <= 68
+shortRsiFilter = rsi15 >= 38 and rsi15 <= 60 and rsi60 >= 30 and rsi60 <= 60
+rangeShortRsiFilter = rsi15 >= 58 and rsi60 <= 65
+trendShortRsiFilter = rsi15 >= 38 and rsi15 <= 56 and rsi60 <= 58
+
+pullbackUp = bullTrend and bbPosition >= 42 and bbPosition <= 58 and longRsiFilter and not longBreakdown and not macroLongBlock and not globalLongBlock
+pullbackDown = bearTrend and bbPosition >= 45 and bbPosition <= 78 and shortRsiFilter and not shortBreakout and not macroShortBlock and not globalShortBlock
+tradable = atrPct <= maxAtrPct and volumeRatio >= minVolumeRatio
+rangeShort = rangeMarket and bbPosition >= 75 and rangeShortRsiFilter and not shortBreakout and not macroShortBlock and not globalShortBlock
+trendShort = bearTrend and trendShortRsiFilter and bbPosition >= 42 and bbPosition <= 78 and not shortBreakout and not macroShortBlock and not globalShortBlock
+
+longSignal = barstate.isconfirmed and tradable and pullbackUp and not macroLongBlock and not globalLongBlock
+shortSignal = barstate.isconfirmed and tradable and (rangeShort or trendShort or pullbackDown) and not macroShortBlock and not globalShortBlock
+
+marketStage = pullbackUp or pullbackDown ? "pullback" : bearTrend or bullTrend ? "trend" : "range"
+confidence = longSignal or shortSignal ? (marketStage == "range" ? 0.68 : 0.72) : 0.0
+
+dcaStep = math.max(0.45, math.min(2.4, atrPct * (marketStage == "range" ? 0.85 : marketStage == "trend" ? 1.1 : 0.75)))
+baseTakeProfit = math.max(0.35, math.min(1.0, dcaStep * 0.55))
+takeProfitMultiplier = marketStage == "trend" ? 1.15 : marketStage == "pullback" ? 1.20 : 1.0
+takeProfit = math.min(1.0, baseTakeProfit * takeProfitMultiplier)
+baseStopLoss = math.max(marketStage == "pullback" ? 3.5 : 3.0, math.min(6.5, dcaStep * 4.0))
+stopLoss = baseStopLoss * 1.30
+
+plot(emaFast, "Fast EMA", color=color.new(color.teal, 0))
+plot(emaMid, "Mid EMA", color=color.new(color.blue, 0))
+plot(emaSlow, "Slow EMA", color=color.new(color.orange, 0))
+plot(bbUpper, "BB Upper", color=color.new(color.gray, 70))
+plot(bbLower, "BB Lower", color=color.new(color.gray, 70))
+plotshape(longSignal, "GRID DCA 2.9 Long", shape.triangleup, location.belowbar, color=color.new(color.lime, 0), size=size.small, text="2.9 L")
+plotshape(shortSignal, "GRID DCA 2.9 Short", shape.triangledown, location.abovebar, color=color.new(color.red, 0), size=size.small, text="2.9 S")
+
+makePayload(strategyCode, side, stage, conf, step, tp, sl) =>
+    trendPassed = side == "long" ? not globalLongBlock : not globalShortBlock
+    trendReason = trendPassed ? "passed" : side == "long" and serverLongEma20Block ? "long_blocked_by_server_ema20_guard" : side == "short" and serverShortEma20Block ? "short_blocked_by_server_ema20_guard" : not useGlobalTrendFilter ? "disabled" : side == "long" ? "long_blocked_by_daily_trend" : "short_blocked_by_daily_trend"
+    btcAboveEma20Json = btcDailyAboveEma20 ? "true" : "false"
+    ethAboveEma20Json = ethDailyAboveEma20 ? "true" : "false"
+    trendPassedJson = trendPassed ? "true" : "false"
+    string payload = "{"
+    payload := payload + "\"strategy\":\"" + strategyCode + "\","
+    payload := payload + "\"source\":\"tradingview\","
+    payload := payload + "\"signal_id\":\"" + strategyCode + "-" + syminfo.ticker + "-" + str.tostring(time) + "-" + side + "\","
+    payload := payload + "\"pair\":\"" + syminfo.ticker + "\","
+    payload := payload + "\"side\":\"" + side + "\","
+    payload := payload + "\"confidence\":" + str.tostring(conf, "#.##") + ","
+    payload := payload + "\"market_stage\":\"" + stage + "\","
+    payload := payload + "\"atr_pct\":" + str.tostring(atrPct, "#.##") + ","
+    payload := payload + "\"volume_ratio\":" + str.tostring(volumeRatio, "#.##") + ","
+    payload := payload + "\"bb_position\":" + str.tostring(bbPosition, "#.##") + ","
+    payload := payload + "\"bb_width_pct\":" + str.tostring(bbWidthPct, "#.##") + ","
+    payload := payload + "\"rsi\":" + str.tostring(rsi15, "#.##") + ","
+    payload := payload + "\"rsi_15m\":" + str.tostring(rsi15, "#.##") + ","
+    payload := payload + "\"rsi_60m\":" + str.tostring(rsi60, "#.##") + ","
+    payload := payload + "\"candle_pct\":" + str.tostring(candlePct, "#.##") + ","
+    payload := payload + "\"bar_move_pct\":" + str.tostring(barMovePct, "#.##") + ","
+    payload := payload + "\"btc_move_1\":" + str.tostring(btcMove1, "#.##") + ","
+    payload := payload + "\"btc_move_3\":" + str.tostring(btcMove3, "#.##") + ","
+    payload := payload + "\"eth_move_1\":" + str.tostring(ethMove1, "#.##") + ","
+    payload := payload + "\"eth_move_3\":" + str.tostring(ethMove3, "#.##") + ","
+    payload := payload + "\"global_market_regime\":\"" + globalMarketRegime + "\","
+    payload := payload + "\"trend_filter_passed\":" + trendPassedJson + ","
+    payload := payload + "\"trend_filter_reason\":\"" + trendReason + "\","
+    payload := payload + "\"btc_daily_move_3\":" + str.tostring(btcDailyMove3, "#.##") + ","
+    payload := payload + "\"eth_daily_move_3\":" + str.tostring(ethDailyMove3, "#.##") + ","
+    payload := payload + "\"global_daily_move_3\":" + str.tostring(globalDailyMove3, "#.##") + ","
+    payload := payload + "\"btc_daily_above_ema20\":" + btcAboveEma20Json + ","
+    payload := payload + "\"eth_daily_above_ema20\":" + ethAboveEma20Json + ","
+    payload := payload + "\"strategy_name\":\"GRID DCA 2.9\","
+    payload := payload + "\"dca_percent\":" + str.tostring(step, "#.##") + ","
+    payload := payload + "\"take_profit\":" + str.tostring(tp, "#.##") + ","
+    payload := payload + "\"take_profit_adjusted\":true,"
+    payload := payload + "\"stop_loss\":" + str.tostring(sl, "#.##") + ","
+    payload := payload + "\"time\":" + str.tostring(time) + ","
+    payload := payload + "\"bar_index\":" + str.tostring(bar_index)
+    payload := payload + "}"
+    payload
+
+if longSignal
+    alert(makePayload("grid_dca_v2", "long", marketStage, confidence, dcaStep, takeProfit, stopLoss), alert.freq_once_per_bar_close)
+
+if shortSignal
+    alert(makePayload("grid_dca_v2", "short", marketStage, confidence, dcaStep, takeProfit, stopLoss), alert.freq_once_per_bar_close)

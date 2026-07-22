@@ -1,10 +1,11 @@
-"""Build a public-ready GRID DCA 2.8 yearly report for all six tariffs."""
+﻿"""Build a public-ready GRID DCA 2.8 yearly report for all six tariffs."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def all_tariffs() -> list[base.Tariff]:
     return [
         base.Tariff(
             code="free",
-            name="Бесплатный",
+            name="Р‘РµСЃРїР»Р°С‚РЅС‹Р№",
             initial_deposit=50.0,
             pairs=free_pairs,
             max_total=4,
@@ -50,7 +51,7 @@ def all_tariffs() -> list[base.Tariff]:
         ),
         base.Tariff(
             code="free_plus",
-            name="Бесплатный Плюс",
+            name="Р‘РµСЃРїР»Р°С‚РЅС‹Р№ РџР»СЋСЃ",
             initial_deposit=100.0,
             pairs=free_pairs,
             max_total=6,
@@ -62,7 +63,7 @@ def all_tariffs() -> list[base.Tariff]:
         ),
         base.Tariff(
             code="start",
-            name="Старт",
+            name="РЎС‚Р°СЂС‚",
             initial_deposit=500.0,
             pairs=start_pairs,
             max_total=8,
@@ -74,7 +75,7 @@ def all_tariffs() -> list[base.Tariff]:
         ),
         base.Tariff(
             code="start_plus",
-            name="Старт Плюс",
+            name="РЎС‚Р°СЂС‚ РџР»СЋСЃ",
             initial_deposit=1000.0,
             pairs=all_pairs,
             max_total=10,
@@ -86,7 +87,7 @@ def all_tariffs() -> list[base.Tariff]:
         ),
         base.Tariff(
             code="premium",
-            name="Премиум",
+            name="РџСЂРµРјРёСѓРј",
             initial_deposit=5000.0,
             pairs=all_pairs,
             max_total=12,
@@ -98,7 +99,7 @@ def all_tariffs() -> list[base.Tariff]:
         ),
         base.Tariff(
             code="premium_plus",
-            name="Премиум Плюс",
+            name="РџСЂРµРјРёСѓРј РџР»СЋСЃ",
             initial_deposit=10000.0,
             pairs=all_pairs,
             max_total=40,
@@ -112,11 +113,11 @@ def all_tariffs() -> list[base.Tariff]:
 
 
 def pair_header_html(data: dict) -> str:
-    cells = ["<th>Пара</th>"]
+    cells = ["<th>РџР°СЂР°</th>"]
     for index, tariff in enumerate(data["tariffs"]):
         sep = ' class="tariff-sep"' if index else ""
         name = tariff["name"]
-        cells.append(f"<th{sep}>Сделок {name}</th><th>PnL {name}</th>")
+        cells.append(f"<th{sep}>РЎРґРµР»РѕРє {name}</th><th>PnL {name}</th>")
     return "".join(cells)
 
 
@@ -136,8 +137,8 @@ def build_html(data: dict) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Годовой бэктест __STRATEGY__ по 6 тарифам · Griders</title>
-  <meta name="description" content="Годовой бэктест стратегии __STRATEGY__ по 6 тарифам Griders: прибыль, просадка, сделки, комиссии, стоп-лоссы и результаты по торговым парам.">
+  <title>Р“РѕРґРѕРІРѕР№ Р±СЌРєС‚РµСЃС‚ __STRATEGY__ РїРѕ 6 С‚Р°СЂРёС„Р°Рј В· Griders</title>
+  <meta name="description" content="Р“РѕРґРѕРІРѕР№ Р±СЌРєС‚РµСЃС‚ СЃС‚СЂР°С‚РµРіРёРё __STRATEGY__ РїРѕ 6 С‚Р°СЂРёС„Р°Рј Griders: РїСЂРёР±С‹Р»СЊ, РїСЂРѕСЃР°РґРєР°, СЃРґРµР»РєРё, РєРѕРјРёСЃСЃРёРё, СЃС‚РѕРї-Р»РѕСЃСЃС‹ Рё СЂРµР·СѓР»СЊС‚Р°С‚С‹ РїРѕ С‚РѕСЂРіРѕРІС‹Рј РїР°СЂР°Рј.">
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="stylesheet" href="/static/app.css?v=20260628-grid-dca-28-report">
   <style>
@@ -165,19 +166,15 @@ def build_html(data: dict) -> str:
     <section class="panel report-hero">
       <div>
         <p class="eyebrow">__STRATEGY__</p>
-        <h1>Годовой бэктест по 6 тарифам</h1>
-        <p class="muted">Портфельная симуляция за период __PERIOD_START__ - __PERIOD_END__. Все разрешённые пары работают одновременно, а лимиты каждого тарифа применяются к общей очереди сигналов.</p>
+        <h1>Р“РѕРґРѕРІРѕР№ Р±СЌРєС‚РµСЃС‚ РїРѕ 6 С‚Р°СЂРёС„Р°Рј</h1>
+        <p class="muted">РџРѕСЂС‚С„РµР»СЊРЅР°СЏ СЃРёРјСѓР»СЏС†РёСЏ Р·Р° РїРµСЂРёРѕРґ __PERIOD_START__ - __PERIOD_END__. Р’СЃРµ СЂР°Р·СЂРµС€С‘РЅРЅС‹Рµ РїР°СЂС‹ СЂР°Р±РѕС‚Р°СЋС‚ РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕ, Р° Р»РёРјРёС‚С‹ РєР°Р¶РґРѕРіРѕ С‚Р°СЂРёС„Р° РїСЂРёРјРµРЅСЏСЋС‚СЃСЏ Рє РѕР±С‰РµР№ РѕС‡РµСЂРµРґРё СЃРёРіРЅР°Р»РѕРІ.</p>
       </div>
-      <div class="report-date"><span>Сигналов-кандидатов</span><strong>__SIGNAL_CANDIDATES__</strong></div>
-    </section>
-    <section class="panel">
-      <h2>Краткий вывод</h2>
-      <p class="muted">Лучший результат в этом прогоне: <strong>__BEST_TARIFF__</strong>, PnL <strong class="__BEST_CLASS__">__BEST_PNL__ USDT</strong>, profit factor <strong>__BEST_PF__</strong>.</p>
+      <div class="report-date"><span>РЎРёРіРЅР°Р»РѕРІ-РєР°РЅРґРёРґР°С‚РѕРІ</span><strong>__SIGNAL_CANDIDATES__</strong></div>
     </section>
     <section class="report-grid six">__CARDS__</section>
     <section class="tariff-charts">__CHARTS__</section>
     <section class="panel">
-      <h2>PnL по парам</h2>
+      <h2>PnL РїРѕ РїР°СЂР°Рј</h2>
       <div class="table-scroll">
         <table>
           <thead><tr>__PAIR_HEADER__</tr></thead>
@@ -186,27 +183,27 @@ def build_html(data: dict) -> str:
       </div>
     </section>
     <section class="panel">
-      <h2>Худшие сделки</h2>
+      <h2>РҐСѓРґС€РёРµ СЃРґРµР»РєРё</h2>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Тариф</th><th>Пара</th><th>Сторона</th><th>Стадия</th><th>Вход UTC</th><th>Выход</th><th>PnL</th></tr></thead>
+          <thead><tr><th>РўР°СЂРёС„</th><th>РџР°СЂР°</th><th>РЎС‚РѕСЂРѕРЅР°</th><th>РЎС‚Р°РґРёСЏ</th><th>Р’С…РѕРґ UTC</th><th>Р’С‹С…РѕРґ</th><th>PnL</th></tr></thead>
           <tbody>__WORST_ROWS__</tbody>
         </table>
       </div>
     </section>
     <section class="panel">
-      <h2>Допущения расчёта</h2>
+      <h2>Р”РѕРїСѓС‰РµРЅРёСЏ СЂР°СЃС‡С‘С‚Р°</h2>
       <ul class="clean-list">
-        <li>Источник данных: публичные свечи Bybit linear futures. Таймфрейм входа - 15 минут.</li>
-        <li>__STRATEGY__ использует базовые сигналы GRID DCA и текущий фильтр дневного тренда BTC/ETH: лонги блокируются в downtrend, шорты блокируются в uptrend; дополнительно серверный EMA20 guard отсекает сделки против дневного положения BTC и ETH.</li>
-        <li>Вход считается по открытию следующей 15-минутной свечи после подтверждённого сигнала TradingView.</li>
-        <li>Первый ордер для тарифов с расчётом от депозита считается по 5% на сделку и ограничивается максимумом тарифа.</li>
-        <li>Перед открытием новой сделки проверяется плановая маржа: сумма маржи уже открытых сеток и новой сетки не должна превышать текущий депозит тарифа.</li>
-        <li>Комиссия: taker 0.05% на первый ордер, страховочные ордера и выход.</li>
-        <li>Если внутри одной свечи одновременно могли сработать TP и SL, засчитывается SL как более осторожный сценарий.</li>
-        <li>После стоп-лосса применяется пауза GRID DCA на 3 часа.</li>
-        <li>Проскальзывание, funding, задержки webhook и возможные отказы Cryptorg/биржи не учитываются.</li>
-        <li><strong>Предупреждение:</strong> прибыль в прошлом не означает прибыль в будущем. Данный бэктест не гарантирует дохода по этой стратегии.</li>
+        <li>РСЃС‚РѕС‡РЅРёРє РґР°РЅРЅС‹С…: РїСѓР±Р»РёС‡РЅС‹Рµ СЃРІРµС‡Рё Bybit linear futures. РўР°Р№РјС„СЂРµР№Рј РІС…РѕРґР° - 15 РјРёРЅСѓС‚.</li>
+        <li>__STRATEGY__ РёСЃРїРѕР»СЊР·СѓРµС‚ Р±Р°Р·РѕРІС‹Рµ СЃРёРіРЅР°Р»С‹ GRID DCA Рё С‚РµРєСѓС‰РёР№ С„РёР»СЊС‚СЂ РґРЅРµРІРЅРѕРіРѕ С‚СЂРµРЅРґР° BTC/ETH: Р»РѕРЅРіРё Р±Р»РѕРєРёСЂСѓСЋС‚СЃСЏ РІ downtrend, С€РѕСЂС‚С‹ Р±Р»РѕРєРёСЂСѓСЋС‚СЃСЏ РІ uptrend; РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕ СЃРµСЂРІРµСЂРЅС‹Р№ EMA20 guard РѕС‚СЃРµРєР°РµС‚ СЃРґРµР»РєРё РїСЂРѕС‚РёРІ РґРЅРµРІРЅРѕРіРѕ РїРѕР»РѕР¶РµРЅРёСЏ BTC Рё ETH.</li>
+        <li>Р’С…РѕРґ СЃС‡РёС‚Р°РµС‚СЃСЏ РїРѕ РѕС‚РєСЂС‹С‚РёСЋ СЃР»РµРґСѓСЋС‰РµР№ 15-РјРёРЅСѓС‚РЅРѕР№ СЃРІРµС‡Рё РїРѕСЃР»Рµ РїРѕРґС‚РІРµСЂР¶РґС‘РЅРЅРѕРіРѕ СЃРёРіРЅР°Р»Р° TradingView.</li>
+        <li>РџРµСЂРІС‹Р№ РѕСЂРґРµСЂ РґР»СЏ С‚Р°СЂРёС„РѕРІ СЃ СЂР°СЃС‡С‘С‚РѕРј РѕС‚ РґРµРїРѕР·РёС‚Р° СЃС‡РёС‚Р°РµС‚СЃСЏ РїРѕ 5% РЅР° СЃРґРµР»РєСѓ Рё РѕРіСЂР°РЅРёС‡РёРІР°РµС‚СЃСЏ РјР°РєСЃРёРјСѓРјРѕРј С‚Р°СЂРёС„Р°.</li>
+        <li>РџРµСЂРµРґ РѕС‚РєСЂС‹С‚РёРµРј РЅРѕРІРѕР№ СЃРґРµР»РєРё РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ РїР»Р°РЅРѕРІР°СЏ РјР°СЂР¶Р°: СЃСѓРјРјР° РјР°СЂР¶Рё СѓР¶Рµ РѕС‚РєСЂС‹С‚С‹С… СЃРµС‚РѕРє Рё РЅРѕРІРѕР№ СЃРµС‚РєРё РЅРµ РґРѕР»Р¶РЅР° РїСЂРµРІС‹С€Р°С‚СЊ С‚РµРєСѓС‰РёР№ РґРµРїРѕР·РёС‚ С‚Р°СЂРёС„Р°.</li>
+        <li>РљРѕРјРёСЃСЃРёСЏ: taker 0.05% РЅР° РїРµСЂРІС‹Р№ РѕСЂРґРµСЂ, СЃС‚СЂР°С…РѕРІРѕС‡РЅС‹Рµ РѕСЂРґРµСЂР° Рё РІС‹С…РѕРґ.</li>
+        <li>Р•СЃР»Рё РІРЅСѓС‚СЂРё РѕРґРЅРѕР№ СЃРІРµС‡Рё РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕ РјРѕРіР»Рё СЃСЂР°Р±РѕС‚Р°С‚СЊ TP Рё SL, Р·Р°СЃС‡РёС‚С‹РІР°РµС‚СЃСЏ SL РєР°Рє Р±РѕР»РµРµ РѕСЃС‚РѕСЂРѕР¶РЅС‹Р№ СЃС†РµРЅР°СЂРёР№.</li>
+        <li>РџРѕСЃР»Рµ СЃС‚РѕРї-Р»РѕСЃСЃР° РїСЂРёРјРµРЅСЏРµС‚СЃСЏ РїР°СѓР·Р° GRID DCA РЅР° 3 С‡Р°СЃР°.</li>
+        <li>РџСЂРѕСЃРєР°Р»СЊР·С‹РІР°РЅРёРµ, funding, Р·Р°РґРµСЂР¶РєРё webhook Рё РІРѕР·РјРѕР¶РЅС‹Рµ РѕС‚РєР°Р·С‹ Cryptorg/Р±РёСЂР¶Рё РЅРµ СѓС‡РёС‚С‹РІР°СЋС‚СЃСЏ.</li>
+        <li><strong>РџСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ:</strong> РїСЂРёР±С‹Р»СЊ РІ РїСЂРѕС€Р»РѕРј РЅРµ РѕР·РЅР°С‡Р°РµС‚ РїСЂРёР±С‹Р»СЊ РІ Р±СѓРґСѓС‰РµРј. Р”Р°РЅРЅС‹Р№ Р±СЌРєС‚РµСЃС‚ РЅРµ РіР°СЂР°РЅС‚РёСЂСѓРµС‚ РґРѕС…РѕРґР° РїРѕ СЌС‚РѕР№ СЃС‚СЂР°С‚РµРіРёРё.</li>
       </ul>
     </section>
   </main>
@@ -218,10 +215,6 @@ def build_html(data: dict) -> str:
         "__PERIOD_START__": period_start,
         "__PERIOD_END__": period_end,
         "__SIGNAL_CANDIDATES__": str(data["signal_candidates"]),
-        "__BEST_TARIFF__": best["name"],
-        "__BEST_CLASS__": css_num(best["metrics"]["pnl"]),
-        "__BEST_PNL__": signed(best["metrics"]["pnl"]),
-        "__BEST_PF__": fmt(best["metrics"]["profit_factor"]),
         "__CARDS__": tariff_ordered_cards_html(data),
         "__CHARTS__": chart_cards_html(data),
         "__PAIR_HEADER__": pair_header_html(data),
@@ -238,10 +231,20 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=365)
     parser.add_argument("--end", default="2026-06-11T14:45:00+00:00")
+    parser.add_argument("--start", default=None)
+    parser.add_argument("--html-out", default=str(HTML_PATH))
+    parser.add_argument("--json-out", default=str(JSON_PATH))
     args = parser.parse_args()
 
     end = datetime.fromisoformat(args.end).astimezone(timezone.utc)
-    start, end, rows = await base.fetch_all(args.days, end)
+    if args.start:
+        start = datetime.fromisoformat(args.start).astimezone(timezone.utc)
+        if start >= end:
+            raise SystemExit("--start must be earlier than --end")
+        fetch_days = max(1, math.ceil((end - start).total_seconds() / 86400))
+        _, end, rows = await base.fetch_all(fetch_days, end)
+    else:
+        start, end, rows = await base.fetch_all(args.days, end)
     candidates, candidate_skipped = all_signal_candidates_base_tp_with_server_guard(start, rows)
     original_side_cooldown = base.SIDE_WEBHOOK_COOLDOWN_MS
     base.SIDE_WEBHOOK_COOLDOWN_MS = 0
@@ -263,11 +266,15 @@ async def main() -> None:
     for tariff, result in zip(data["tariffs"], results):
         tariff["daily_chart"] = day_chart(start, end, result["trades"])
 
-    JSON_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    HTML_PATH.write_text(build_html(data), encoding="utf-8")
+    json_path = Path(args.json_out)
+    html_path = Path(args.html_out)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    html_path.write_text(build_html(data), encoding="utf-8")
     print(json.dumps({
-        "html": str(HTML_PATH.resolve()),
-        "json": str(JSON_PATH.resolve()),
+        "html": str(html_path.resolve()),
+        "json": str(json_path.resolve()),
         "period": data["period"],
         "signal_candidates": data["signal_candidates"],
         "metrics": [
@@ -288,3 +295,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
