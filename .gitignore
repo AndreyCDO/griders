@@ -8,9 +8,26 @@ cryptorg_webhook_issue_logs_*.md
 # Local secrets
 .env
 webinar_bot.sqlite3
+support_bot.sqlite3
 working-example/config.php
 working-example/ctgacademy_r.sql
 
 # Generated reports are served as static artifacts, not source.
 webapp/static/reports/*year-tariffs.html
 webapp/static/reports/*year-tariffs.json
+webapp/static/reports/*year-all-tariffs.html
+webapp/static/reports/*year-all-tariffs.json
+webapp/static/reports/*all-tariffs.html
+webapp/static/reports/*all-tariffs.json
+webapp/static/reports/*realistic-live-calibrated.html
+webapp/static/reports/*realistic-live-calibrated.json
+webapp/static/reports/*real-trade-replay.html
+webapp/static/reports/*real-trade-replay.json
+webapp/static/reports/*launch-to-*.html
+webapp/static/reports/*launch-to-*.json
+
+# Local caches and scratch artifacts (not source).
+.cache/
+.private_reports/
+.tmp_*
+*.tmp
