@@ -240,6 +240,14 @@ a { color: var(--accent-dark); text-decoration: none; }
   background: #fff3cf;
   color: #6d3c00;
 }
+.account-mismatch-banner {
+  border-width: 2px;
+  border-color: #c7441e;
+  background: #fff0e8;
+  color: #9d2f12;
+  box-shadow: 0 14px 34px rgba(157, 47, 18, 0.14);
+}
+.account-mismatch-banner strong { font-size: 18px; }
 .free-plan-countdown {
   display: grid;
   gap: 6px;
@@ -1603,6 +1611,12 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
   background: #2b2414;
   color: #ffd98a;
 }
+:root[data-theme="dark"] .account-mismatch-banner {
+  background: #351b13;
+  border-color: #cf5b35;
+  color: #ffd2c0;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .28);
+}
 :root[data-theme="dark"] .free-plan-countdown.expired {
   border-color: #8d4d39;
   background: #2b1d19;
@@ -1830,4 +1844,32 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
   .section-head, .strategy-title { flex-direction: column; }
   .data-list div { display: grid; gap: 3px; }
   .pair-chips.compact { justify-content: flex-start; }
+}
+
+/* ===== SEO article content ===== */
+/* Глобальные правила ol/ul в проекте переопределены под формы, поэтому для
+   статей вводим собственный контейнер с нормальной журнальной типографикой. */
+.article-content { max-width: 820px; margin: 0 auto; }
+.article-content .article-hero { margin-bottom: 18px; }
+.article-content .article-hero .lead { font-size: 16px; line-height: 1.7; color: var(--muted); }
+.article-content .panel.doc-panel { margin-bottom: 18px; }
+.article-content h1 { font-size: 30px; line-height: 1.25; margin: 4px 0 0; }
+.article-content h2 { font-size: 22px; margin: 0 0 12px; }
+.article-content p { color: #43505a; line-height: 1.7; margin: 10px 0; }
+.article-content ul,
+.article-content ol { display: block; margin: 12px 0; padding-left: 24px;
+  border: 0; border-radius: 0; background: transparent; }
+.article-content li { display: list-item; margin: 7px 0; color: #43505a; line-height: 1.6; }
+.article-content ul li { list-style: disc; }
+.article-content ol li { list-style: decimal; }
+.article-content code { background: var(--line); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+.article-content a { color: var(--accent-dark); }
+.article-content .article-accent { border-left: 4px solid var(--accent); }
+.article-content .article-note { border-left: 4px solid var(--warn); }
+.article-content .article-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 22px 0 8px; }
+:root[data-theme="dark"] .article-content p,
+:root[data-theme="dark"] .article-content li { color: #c5d1d8; }
+@media (max-width: 720px) {
+  .article-content h1 { font-size: 24px; }
+  .article-content h2 { font-size: 19px; }
 }

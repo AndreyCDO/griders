@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 import ghost_webhook
 import httpx
@@ -326,6 +327,10 @@ async def _create_signal_for_row(row: dict, event: dict, event_id: int) -> None:
     if risk_pause_reason:
         _insert_signal(row, event, event_id, "skipped", [risk_pause_reason, *event["reasons"]], {})
         return
+    mismatch_reason = _account_mismatch_stopped_reason(row)
+    if mismatch_reason:
+        _insert_signal(row, event, event_id, "skipped", [mismatch_reason, *event["reasons"]], {})
+        return
     guard_reason = _grid_dca_guard_reason(event)
     if guard_reason:
         _insert_signal(row, event, event_id, "skipped", [guard_reason, *event["reasons"]], {})
@@ -574,6 +579,7 @@ async def _verify_sent_signal_background(
                 {"open": open_response, "emergency_close": close_response},
                 error,
                 close_order_type="fast_open_confirm_failed",
+                connection_id=connection_id,
             )
             release_pair_launch(user_id, connection_id, event["pair"])
             release_strategy_side_launch(user_id, connection_id, strategy_code, event["side"])
@@ -582,87 +588,94 @@ async def _verify_sent_signal_background(
             "UPDATE ai_signals SET position_confirmed_at=NOW(), confirmation_status=%s WHERE id=%s",
             ("position_confirmed", signal_id),
         )
-        if not await _confirm_protective_orders(
+        _clear_account_mismatch_on_success(connection_id)
+        # Двухпроверочная защита ордеров: проверка → modify → 2 проверки → close.
+        # Строим payload-ы заранее (параметры берутся из той же grid, что при открытии).
+        repair_payload = ghost_webhook.build_modify_payload(
+            pair=event["pair"],
+            strategy=event["side"],
+            dca_enabled=True,
+            dca_max=grid["dca_max"],
+            dca_active=grid["dca_active"],
+            dca_volume=_fmt_volume(order_volume),
+            dca_percent=grid["dca_percent"],
+            dca_multiplier_volume=grid["dca_multiplier_volume"],
+            dca_multiplier_price=grid["dca_multiplier_price"],
+            close_enabled=True,
+            close_value=grid["take_profit"],
+            stop_enabled=True,
+            stop_value=grid["stop_loss"],
+            stop_delay=0,
+        )
+        close_payload = ghost_webhook.build_close_payload(pair=event["pair"], strategy=event["side"], close_position=True)
+        result = await _ensure_protective_orders_three_pass(
             api_key,
             api_secret,
             event["pair"],
             event["side"],
             int(grid["dca_active"]),
-        ):
-            repair_payload = ghost_webhook.build_modify_payload(
-                pair=event["pair"],
-                strategy=event["side"],
-                dca_enabled=True,
-                dca_max=grid["dca_max"],
-                dca_active=grid["dca_active"],
-                dca_volume=_fmt_volume(order_volume),
-                dca_percent=grid["dca_percent"],
-                dca_multiplier_volume=grid["dca_multiplier_volume"],
-                dca_multiplier_price=grid["dca_multiplier_price"],
-                close_enabled=True,
-                close_value=grid["take_profit"],
-                stop_enabled=True,
-                stop_value=grid["stop_loss"],
-                stop_delay=0,
-            )
-            repair_response = None
-            try:
-                repair_response = await ghost_webhook.send_payload(repair_payload, webhook_url=webhook_url, confirm=True)
-            except Exception as repair_exc:
-                repair_response = {"ok": False, "error": str(repair_exc), "payload": repair_payload}
-            if await _confirm_protective_orders(
-                api_key,
-                api_secret,
-                event["pair"],
-                event["side"],
-                int(grid["dca_active"]),
-            ):
-                execute(
-                    """
-                    UPDATE ai_signals
-                    SET response=%s,
-                        protective_orders_confirmed_at=NOW(),
-                        confirmation_finished_at=NOW(),
-                        confirmation_status=%s
-                    WHERE id=%s
-                    """,
-                    (
-                        json.dumps({"open": open_response, "protective_update": repair_response}, ensure_ascii=False),
-                        "protective_repaired",
-                        signal_id,
-                    ),
-                )
-                return
-            close_payload = ghost_webhook.build_close_payload(pair=event["pair"], strategy=event["side"], close_position=True)
-            close_response = None
-            try:
-                close_response = await ghost_webhook.send_payload(close_payload, webhook_url=webhook_url, confirm=True)
-            except Exception as close_exc:
-                close_response = {"ok": False, "error": str(close_exc), "payload": close_payload}
-            error = (
-                "Cryptorg открыл позицию, но защитные ордера DCA/TP/SL не появились в read-only API "
-                "даже после повторной отправки настроек. Griders отправил аварийную команду закрытия "
-                "позиции, чтобы она не оставалась без защиты."
-            )
-            _mark_signal_failed_after_fast_send(
-                signal_id,
-                {"open": open_response, "protective_update": repair_response, "emergency_close": close_response},
-                error,
-                close_order_type="fast_protective_confirm_failed",
-            )
-            release_pair_launch(user_id, connection_id, event["pair"])
-            release_strategy_side_launch(user_id, connection_id, strategy_code, event["side"])
-            return
-        execute(
-            """
-            UPDATE ai_signals
-            SET protective_orders_confirmed_at=NOW(),
-                confirmation_finished_at=NOW(),
-                confirmation_status=%s
-            WHERE id=%s
-            """,
-            ("confirmed", signal_id),
+            repair_payload,
+            webhook_url,
+            close_payload,
         )
+        stage = result.get("stage")
+        if stage == "ok":
+            # Защитные ордера появились сразу после открытия.
+            execute(
+                """
+                UPDATE ai_signals
+                SET protective_orders_confirmed_at=NOW(),
+                    confirmation_finished_at=NOW(),
+                    confirmation_status=%s
+                WHERE id=%s
+                """,
+                ("confirmed", signal_id),
+            )
+            return
+        if stage == "repaired":
+            # Ордера появились после modify — защита восстановлена.
+            execute(
+                """
+                UPDATE ai_signals
+                SET response=%s,
+                    protective_orders_confirmed_at=NOW(),
+                    confirmation_finished_at=NOW(),
+                    confirmation_status=%s
+                WHERE id=%s
+                """,
+                (
+                    json.dumps({"open": open_response, "protective_orders": result.get("responses", {})}, ensure_ascii=False),
+                    "protective_repaired",
+                    signal_id,
+                ),
+            )
+            return
+        # stage == "closed" или "unprotected": позиция без защиты, close отправлен.
+        still_open = result.get("position_still_open")
+        if stage == "unprotected":
+            # Close не сработал — позиция осталась открыта без ордеров.
+            # Уведомляем пользователя (Telegram + будет видна на дашборде).
+            conn_label = (row or {}).get("label") or f"Подключение {connection_id}"
+            await _notify_user_unprotected_position(
+                user_id, signal_id, event["pair"], event["side"], conn_label
+            )
+        error = (
+            "Cryptorg открыл позицию, но защитные ордера DCA/TP/SL не появились в read-only API "
+            "даже после повторной отправки настроек (modify). "
+            + ("Аварийное закрытие не сработало — позиция осталась без защиты, пользователь уведомлён."
+               if still_open else
+               "Griders отправил аварийную команду закрытия позиции.")
+        )
+        _mark_signal_failed_after_fast_send(
+            signal_id,
+            {"open": open_response, "protective_orders": result.get("responses", {})},
+            error,
+            close_order_type="fast_protective_confirm_failed",
+        )
+        release_pair_launch(user_id, connection_id, event["pair"])
+        release_strategy_side_launch(user_id, connection_id, strategy_code, event["side"])
+        return
+
     except Exception:
         logger.exception("GRID DCA background confirmation failed for signal %s", signal_id)
         execute(
@@ -671,7 +684,7 @@ async def _verify_sent_signal_background(
         )
 
 
-def _mark_signal_failed_after_fast_send(signal_id: int, response: dict, error: str, close_order_type: str) -> None:
+def _mark_signal_failed_after_fast_send(signal_id: int, response: dict, error: str, close_order_type: str, connection_id: int | None = None) -> None:
     execute(
         """
         UPDATE ai_signals
@@ -692,6 +705,137 @@ def _mark_signal_failed_after_fast_send(signal_id: int, response: dict, error: s
         """,
         (close_order_type, signal_id),
     )
+    # Account-mismatch detection: the Ghost webhook accepted the signal, but
+    # the position never appeared in the read-only API. This is the signature
+    # of an API key and a Ghost webhook wired to different Cryptorg
+    # subaccounts. Only "fast_open_confirm_failed" counts (position missing);
+    # "fast_protective_confirm_failed" means the position IS open and is a
+    # different problem, so it must not inflate the mismatch streak.
+    if close_order_type == "fast_open_confirm_failed" and connection_id is not None:
+        _increment_account_mismatch(connection_id)
+
+
+def _increment_account_mismatch(connection_id: int) -> None:
+    """+1 to the mismatch streak and auto-stop at 3 in a row.
+
+    Only active while account_mismatch_active=1 (i.e. right after a webhook
+    change, before the configuration is validated by a single confirmed
+    position). Once stopped_at is set, new trades are blocked until the user
+    fixes the webhook URL.
+    """
+    row = fetch_one(
+        """
+        SELECT account_mismatch_streak, account_mismatch_active
+        FROM ai_user_connections
+        WHERE id=%s
+        """,
+        (connection_id,),
+    )
+    if not row or int(row.get("account_mismatch_active") or 0) != 1:
+        return
+    streak = int(row.get("account_mismatch_streak") or 0) + 1
+    if streak >= 3:
+        execute(
+            """
+            UPDATE ai_user_connections
+            SET account_mismatch_streak=%s, account_mismatch_stopped_at=NOW()
+            WHERE id=%s AND account_mismatch_active=1
+            """,
+            (streak, connection_id),
+        )
+        logger.warning(
+            "Account mismatch auto-stop: connection %s reached %d unresolved opens, trading paused.",
+            connection_id, streak,
+        )
+    else:
+        execute(
+            """
+            UPDATE ai_user_connections
+            SET account_mismatch_streak=%s
+            WHERE id=%s AND account_mismatch_active=1
+            """,
+            (streak, connection_id),
+        )
+
+
+def _clear_account_mismatch_on_success(connection_id: int) -> None:
+    """First confirmed position proves the configuration is valid.
+
+    Permanently disables the mismatch check for this connection: the API key
+    and webhook belong to the same subaccount, so further checks are not
+    needed. The check is re-enabled only when the user changes the webhook URL.
+    """
+    execute(
+        """
+        UPDATE ai_user_connections
+        SET account_mismatch_active=0, account_mismatch_streak=0, account_mismatch_stopped_at=NULL
+        WHERE id=%s AND account_mismatch_active=1
+        """,
+        (connection_id,),
+    )
+
+
+def _account_mismatch_stopped_reason(row: dict) -> str | None:
+    """Block new launches when the connection was auto-stopped after repeated
+    subaccount mismatches (API key and Ghost webhook on different subaccounts).
+
+    Triggered once account_mismatch_active=1 and the streak reached the
+    threshold (3 unresolved opens in a row). Stays blocked until the user
+    changes the webhook URL, which resets the streak.
+    """
+    if int(row.get("account_mismatch_active") or 0) != 1:
+        return None
+    if int(row.get("account_mismatch_streak") or 0) < 3:
+        return None
+    return "account_mismatch_subaccount_stopped"
+
+
+async def _notify_user_unprotected_position(
+    user_id: int,
+    signal_id: int,
+    pair: str,
+    side: str,
+    connection_label: str,
+) -> None:
+    """Уведомить пользователя, что позиция осталась открыта без защитных
+    ордеров (DCA/TP/SL) и аварийное закрытие не сработало.
+
+    Анти-спам: если сигнал уже в статусе 'protective_unprotected_notified',
+    повторное уведомление не отправляется. На сайте пользователь увидит
+    позицию через существующий блок unprotected_positions на дашборде;
+    здесь дополнительно шлём сообщение в Telegram (если привязан).
+    """
+    # Анти-спам: проверяем, не уведомляли ли уже по этому сигналу.
+    existing = fetch_one(
+        "SELECT id FROM ai_signals WHERE id=%s AND confirmation_status=%s",
+        (signal_id, "protective_unprotected_notified"),
+    )
+    if existing:
+        return
+    # Фиксируем статус (атомарно), чтобы параллельные процессы не дублировали.
+    execute(
+        "UPDATE ai_signals SET confirmation_status=%s WHERE id=%s AND confirmation_status<>%s",
+        ("protective_unprotected_notified", signal_id, "protective_unprotected_notified"),
+    )
+    # Telegram-уведомление (только если привязан аккаунт).
+    user = fetch_one("SELECT telegram_user_id FROM ai_users WHERE id=%s", (user_id,))
+    if not user:
+        return
+    tg_id = user.get("telegram_user_id")
+    if not tg_id:
+        return  # Telegram не привязан — пользователь увидит позицию на дашборде.
+    side_label = "лонг" if side == "long" else "шорт" if side == "short" else side
+    text = (
+        f"Внимание: по паре {pair} ({side_label}) в подключении «{connection_label}» "
+        "возможно открыта позиция без закрывающих ордеров (DCA/TP/SL), и автоматическое "
+        "закрытие не сработало. Зайдите в Cryptorg и закройте эту позицию вручную."
+    )
+    try:
+        # Ленивый импорт, чтобы избежать циклической зависимости модулей.
+        from .tariff_bot import _send_message as tg_send_message
+        await tg_send_message(int(tg_id), text)
+    except Exception as exc:
+        logger.warning("unprotected-position telegram notify failed for user %s signal %s: %r", user_id, signal_id, exc)
 
 
 def _insert_signal(
@@ -844,19 +988,22 @@ def _signal_exists_for_event(user_id: int, connection_id: int | None, strategy_c
 def _grid_from_event(event: dict) -> dict:
     stage = event["market_stage"] if event["market_stage"] in {"range", "trend", "pullback"} else "range"
     presets = {
-        "range": {"dca_max": 4, "dca_active": 3, "mult_vol": "1.15", "mult_price": "1.05", "atr_step_mult": 0.85, "min_step": 0.45, "max_step": 1.8, "min_tp": 0.35, "max_tp": 0.75, "tp_multiplier": 1.0, "min_stop": 3.0, "max_stop": 6.0, "sl_multiplier": 1.3},
-        "trend": {"dca_max": 3, "dca_active": 2, "mult_vol": "1.2", "mult_price": "1.15", "atr_step_mult": 1.1, "min_step": 0.75, "max_step": 2.4, "min_tp": 0.45, "max_tp": 1.0, "tp_multiplier": 1.15, "min_stop": 3.0, "max_stop": 6.5, "sl_multiplier": 1.3},
-        "pullback": {"dca_max": 5, "dca_active": 3, "mult_vol": "1.2", "mult_price": "1.1", "atr_step_mult": 0.75, "min_step": 0.55, "max_step": 2.0, "min_tp": 0.4, "max_tp": 0.85, "tp_multiplier": 1.2, "min_stop": 3.5, "max_stop": 6.5, "sl_multiplier": 1.3},
+        "range": {"dca_max": 4, "dca_active": 3, "mult_vol": "1.15", "mult_price": "1.05", "atr_step_mult": 0.85, "min_step": 0.45, "max_step": 1.8, "tp_multiplier": 1.0, "min_stop": 3.0, "max_stop": 6.0, "sl_multiplier": 1.3},
+        "trend": {"dca_max": 3, "dca_active": 2, "mult_vol": "1.2", "mult_price": "1.15", "atr_step_mult": 1.1, "min_step": 0.75, "max_step": 2.4, "tp_multiplier": 1.25, "min_stop": 3.0, "max_stop": 6.5, "sl_multiplier": 1.3},
+        "pullback": {"dca_max": 5, "dca_active": 3, "mult_vol": "1.2", "mult_price": "1.1", "atr_step_mult": 0.75, "min_step": 0.55, "max_step": 2.0, "tp_multiplier": 1.35, "min_stop": 3.5, "max_stop": 6.5, "sl_multiplier": 1.3},
     }
     preset = presets[stage]
     step = event["dca_percent"] or _clamp(event["atr_pct"] * preset["atr_step_mult"], preset["min_step"], preset["max_step"])
+    # GRID DCA 2.10: динамический TP по волатильности. Базовый step*0.55 слишком
+    # узкий — при проскальзывании 0.1% почти весь TP съедается комиссиями. TP теперь
+    # = atr_pct * 0.75 * stage_mult, clamped [0.45, 1.5]. (DYN_TP_ATR_MULT = 0.75)
     if event["take_profit"]:
         take_profit = event["take_profit"]
         if not event.get("take_profit_adjusted"):
             take_profit *= GRID_DCA_TAKE_PROFIT_MULTIPLIER
     else:
-        base_take_profit = _clamp(step * 0.55, preset["min_tp"], preset["max_tp"])
-        take_profit = min(1.0, base_take_profit * preset["tp_multiplier"])
+        base_take_profit = _clamp(event["atr_pct"] * 0.75, 0.45, 1.5)
+        take_profit = min(1.5, base_take_profit * preset["tp_multiplier"])
     coverage = _grid_coverage(step, preset["dca_active"], float(preset["mult_price"]))
     stop_loss = event["stop_loss"] or (_clamp(coverage * 1.25, preset["min_stop"], preset["max_stop"]) * preset["sl_multiplier"])
     return {
@@ -1227,7 +1374,7 @@ def _global_pair_stop_guard_reason(event: dict) -> str | None:
 
 def _grid_dca_guard_reason(event: dict) -> str | None:
     strategy_code = event.get("strategy_code") or DEFAULT_STRATEGY_CODE
-    label = "GRID DCA 2.9"
+    label = "GRID DCA 2.10"
     macro_1 = 0.8
     macro_3 = 1.2
     adverse_candle = 0.7
@@ -1526,6 +1673,113 @@ async def _confirm_protective_orders(
             return True
         if time.monotonic() >= deadline:
             return False
+
+
+async def _protective_orders_present(
+    api_key: str,
+    api_secret: str,
+    pair: str,
+    side: str,
+    expected_dca_active: int,
+) -> tuple[bool, str | None]:
+    """Одна проверка наличия защитных ордеров через read-only API.
+
+    Возвращает (есть_защита, причина_отсутствия).
+    При сетевой ошибке считаем, что проверить не удалось (возвращаем True,
+    чтобы не закрывать сделку из-за временного сбоя API — безопаснее).
+    """
+    if not api_key or not api_secret:
+        return True, None
+    try:
+        active_rows = await positions(api_key, api_secret)
+        # Позиция уже закрылась сама (по TP рынка или иначе) — защиты не нужно.
+        if not _matching_position_is_open(active_rows, pair, side):
+            return True, "position_closed"
+        orders = await open_orders(api_key, api_secret, pair)
+    except Exception as exc:
+        logger.warning("protective orders read-only check failed for %s %s: %r", pair, side, exc)
+        return True, "api_error"
+    has_close = _has_closing_order(orders, side)
+    has_dca = expected_dca_active <= 0 or _has_dca_order(orders, side)
+    if has_close and has_dca:
+        return True, None
+    reasons = []
+    if not has_close:
+        reasons.append("no_close_order")
+    if not has_dca:
+        reasons.append("no_dca_order")
+    return False, ",".join(reasons)
+
+
+async def _ensure_protective_orders_three_pass(
+    api_key: str,
+    api_secret: str,
+    pair: str,
+    side: str,
+    expected_dca_active: int,
+    modify_payload: dict,
+    webhook_url: str,
+    close_payload: dict,
+) -> dict:
+    """Двухпроверочная защита ордеров с modify и close как крайней мерой.
+
+    Поток:
+      1. Ждём 5 сек → ПРОВЕРКА 1. Если ордера есть — ок.
+      2. Нет → MODIFY (переустановка DCA/TP/SL) → ПРОВЕРКА 2 через 10 сек.
+      3. Нет → ПРОВЕРКА 3 через ещё 10 сек.
+      4. Если после 3-й проверки ордеров всё нет → CLOSE.
+      5. CLOSE → ПРОВЕРКА позиции через 5 сек. Если закрылась — failed/закрыто.
+         Если позиция ещё открыта — флаг position_still_open=True для уведомления.
+
+    Возвращает dict:
+      {"ok": bool, "stage": "ok"/"repaired"/"closed"/"unprotected",
+       "position_still_open": bool, "responses": {...}}
+    """
+    responses: dict[str, Any] = {}
+
+    # ПРОВЕРКА 1 (через 5 сек после открытия).
+    await asyncio.sleep(5)
+    ok, _reason = await _protective_orders_present(api_key, api_secret, pair, side, expected_dca_active)
+    if ok:
+        return {"ok": True, "stage": "ok", "position_still_open": True, "responses": responses}
+
+    # MODIFY — переустановка сетки DCA/TP/SL.
+    try:
+        modify_response = await ghost_webhook.send_payload(modify_payload, webhook_url=webhook_url, confirm=True)
+    except Exception as exc:
+        modify_response = {"ok": False, "error": str(exc), "payload": modify_payload}
+    responses["modify"] = modify_response
+
+    # ПРОВЕРКА 2 (через 10 сек после modify).
+    await asyncio.sleep(10)
+    ok, _reason = await _protective_orders_present(api_key, api_secret, pair, side, expected_dca_active)
+    if ok:
+        return {"ok": True, "stage": "repaired", "position_still_open": True, "responses": responses}
+
+    # ПРОВЕРКА 3 (через ещё 10 сек).
+    await asyncio.sleep(10)
+    ok, _reason = await _protective_orders_present(api_key, api_secret, pair, side, expected_dca_active)
+    if ok:
+        return {"ok": True, "stage": "repaired", "position_still_open": True, "responses": responses}
+
+    # Защиты так и нет — CLOSE как крайняя мера.
+    try:
+        close_response = await ghost_webhook.send_payload(close_payload, webhook_url=webhook_url, confirm=True)
+    except Exception as exc:
+        close_response = {"ok": False, "error": str(exc), "payload": close_payload}
+    responses["emergency_close"] = close_response
+
+    # ПРОВЕРКА CLOSE (через 5 сек) — закрылась ли позиция.
+    await asyncio.sleep(5)
+    try:
+        still_open = _matching_position_is_open(await positions(api_key, api_secret), pair, side)
+    except Exception:
+        # Не удалось проверить — предполагаем худшее (позиция может быть открыта).
+        still_open = True
+    if not still_open:
+        return {"ok": False, "stage": "closed", "position_still_open": False, "responses": responses}
+    # Позиция осталась открыта без защиты — нужна эскалация пользователю.
+    return {"ok": False, "stage": "unprotected", "position_still_open": True, "responses": responses}
 
 
 def _matching_position_is_open(rows: list[dict], pair: str, side: str) -> bool:

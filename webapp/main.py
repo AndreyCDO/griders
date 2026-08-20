@@ -263,7 +263,7 @@ async def block_expired_free_plan_writes(request: Request, call_next):
     if request.url.path in allowed_paths or request.url.path.startswith("/integrations/"):
         return await call_next(request)
     user = current_user(request)
-    if user and _free_plan_status(user)["expired"] and not _user_access(user)["is_admin"]:
+    if user and _free_plan_status(user)["expired"] and not _user_access(user)["is_admin"] and not _admin_view_active(request):
         _disable_expired_free_user_strategies(int(user["id"]))
         return RedirectResponse("/tariffs?free_expired=1", status_code=303)
     return await call_next(request)
@@ -648,6 +648,31 @@ def require_user(request: Request) -> dict | RedirectResponse:
     return user
 
 
+def _account_mismatch_context(user: dict | None) -> dict:
+    """Red-banner context: is any of the user's active connections auto-stopped
+    because the API key and the Ghost webhook belong to different Cryptorg
+    subaccounts (signals accepted, but positions never appear in read-only API)?
+    """
+    inactive = {"active": False, "connection_label": ""}
+    if not user:
+        return inactive
+    row = fetch_one(
+        """
+        SELECT id, label
+        FROM ai_user_connections
+        WHERE user_id=%s AND is_active=1
+          AND account_mismatch_active=1
+          AND account_mismatch_streak >= 3
+        ORDER BY account_mismatch_stopped_at DESC
+        LIMIT 1
+        """,
+        (int(user["id"]),),
+    )
+    if not row:
+        return inactive
+    return {"active": True, "connection_label": row.get("label") or ""}
+
+
 def render(request: Request, template: str, context: dict | None = None, status_code: int = 200) -> HTMLResponse:
     lang = _lang(request)
     viewer = _session_user(request)
@@ -663,6 +688,7 @@ def render(request: Request, template: str, context: dict | None = None, status_
         "viewer_user": viewer,
         "viewer_access": _user_access(viewer),
         "admin_view": admin_view,
+        "account_mismatch": _account_mismatch_context(user),
         "user_timezone": _user_timezone_name(user),
         "lang": lang,
         "ui": ui(lang),
@@ -1327,7 +1353,7 @@ def _admin_user_views(user: dict) -> list[dict]:
     rows = fetch_all(
         """
         SELECT u.id, u.email, u.nickname, u.telegram_username, u.telegram_user_id, u.role, u.plan,
-               u.referral_verified, u.created_at,
+               u.referral_verified, u.created_at, u.free_plan_started_at,
                COALESCE(g.cumulative_pnl, 0) AS cumulative_pnl,
                COALESCE(g.closed_trades_count, 0) AS closed_trades_count,
                COALESCE(g.closed_entry_volume, 0) AS closed_entry_volume,
@@ -1376,9 +1402,13 @@ def _admin_user_views(user: dict) -> list[dict]:
     )
     result = []
     for row in rows:
-        status = row.get("connection_status") or "missing"
-        pnl = _float(row.get("cumulative_pnl"))
         row_user = dict(row)
+        status = row.get("connection_status") or "missing"
+        if status == "active" and _free_plan_status(row_user)["expired"]:
+            # Истёкший бесплатный тариф не может показываться активным,
+            # даже если сохранённый статус устарел.
+            status = "ready"
+        pnl = _float(row.get("cumulative_pnl"))
         result.append({
             **row,
             "created_at_display": _format_user_datetime(row.get("created_at"), user),
@@ -1578,7 +1608,7 @@ def _admin_griders_trade_chart_json(rows: list[dict], user: dict) -> str:
 
 
 def _griders_trade_strategy_label(strategy_code: str) -> str:
-    return "GRID DCA 2.9"
+    return "GRID DCA 2.10"
 
 
 async def _refresh_admin_user_stats(
@@ -1602,6 +1632,7 @@ async def _refresh_admin_user_stats(
     rows = fetch_all(
         f"""
         SELECT u.id, u.created_at, u.role, u.plan, COALESCE(u.referral_verified, 0) AS referral_verified,
+               u.free_plan_started_at,
                s.pnl_calculated_at, s.status_checked_at
         FROM ai_users u
         LEFT JOIN ai_user_admin_stats s ON s.user_id = u.id
@@ -1762,6 +1793,8 @@ async def _refresh_one_admin_user_stats(user_row: dict, include_pnl_history: boo
                 logger.warning("admin pnl refresh failed for user %s connection %s: %s", user_id, conn.get("id"), exc)
 
     status = "active" if has_active_autotrade else ("ready" if has_working_connection else "missing")
+    if status == "active" and _free_plan_status(user_row)["expired"]:
+        status = "ready"
     pnl_calculated_at = datetime.now(timezone.utc) if include_pnl_history else existing_stats.get("pnl_calculated_at")
     execute(
         """
@@ -1917,6 +1950,11 @@ async def docs(request: Request):
     return render(request, "docs.html")
 
 
+@app.get("/articles/besplatnyy-bot-dlya-treydinga", response_class=HTMLResponse)
+async def article_free_trading_bot(request: Request):
+    return render(request, "articles/besplatnyy_bot_dlya_treydinga.html")
+
+
 @app.get("/tariffs", response_class=HTMLResponse)
 async def tariffs(request: Request):
     return render(request, "tariffs.html", {"tariffs": PLAN_LIMITS})
@@ -2021,6 +2059,7 @@ async def sitemap_xml():
         ("https://griders.ru/", "daily", "1.0"),
         ("https://griders.ru/tariffs", "weekly", "0.8"),
         ("https://griders.ru/docs", "weekly", "0.8"),
+        ("https://griders.ru/articles/besplatnyy-bot-dlya-treydinga", "monthly", "0.8"),
         ("https://griders.ru/login", "monthly", "0.3"),
         ("https://griders.ru/register", "monthly", "0.5"),
     ]
@@ -2838,6 +2877,22 @@ async def save_connections(
             },
             422,
         )
+    if webhook_url.strip() and not ghost_webhook.is_valid_webhook_url(webhook_url):
+        return render(
+            request,
+            "connections.html",
+            {
+                "connection": _connection_view(current),
+                "connections": [_connection_view(item) for item in _connections(uid)],
+                "creating_new": not bool(current),
+                "can_create_connection": _can_create_connection(user),
+                "connection_locked": False,
+                "connection_limit": _connection_limit(user),
+                "strategies": _available_strategies(user),
+                "error": _t(request, "connections", "invalid_webhook"),
+            },
+            422,
+        )
     encrypted_secret = encrypt_secret(secret_value) if secret_value else (current or {}).get("bybit_api_secret_encrypted")
     normalized_webhook = ghost_webhook.normalize_webhook_url(webhook_url)
     encrypted_webhook = encrypt_secret(normalized_webhook) if normalized_webhook else (current or {}).get("webhook_url_encrypted")
@@ -2852,6 +2907,23 @@ async def save_connections(
         )
         saved_connection_id = int(current["id"])
         saved_pending = str(current.get("approval_status") or "approved") == "pending"
+        # Changing the webhook URL OR the API key means the user is
+        # (re)configuring the connection, and the new pair may again wire the
+        # read-only API key and the Ghost webhook to different Cryptorg
+        # subaccounts. Re-enable the subaccount-mismatch check and reset the
+        # streak so the fresh configuration is validated from scratch.
+        prev_webhook = decrypt_secret(current.get("webhook_url_encrypted")) if current.get("webhook_url_encrypted") else ""
+        webhook_changed = bool(normalized_webhook and normalized_webhook != prev_webhook)
+        api_key_changed = bool(new_api_key and new_api_key != previous_api_key)
+        if webhook_changed or api_key_changed:
+            execute(
+                """
+                UPDATE ai_user_connections
+                SET account_mismatch_active=1, account_mismatch_streak=0, account_mismatch_stopped_at=NULL
+                WHERE id=%s
+                """,
+                (saved_connection_id,),
+            )
     else:
         existing_connections = _connections(uid)
         approval_status = "approved"
@@ -4722,7 +4794,7 @@ def _strategy_card_view(strategy_code: str, lang: str) -> dict:
     code = settings.DEFAULT_STRATEGY_CODE
     if normalize_lang(lang) == "ru":
         text = {
-            "name": "GRID DCA 2.9",
+            "name": "GRID DCA 2.10",
             "description": "Стратегия стадии рынка: адаптивная сетка усреднения по ATR, тейк-профит по стадии рынка, расширенный стоп-лосс и лимиты активных сделок.",
             "simple": "Подходит для спокойного рынка, откатов и участков, где цена ходит волнами. Сделка открывается с сеткой страховочных ордеров, чтобы усреднять вход.",
             "profit": "Потенциал: умеренный, рассчитан на частые небольшие сделки.",
@@ -4730,7 +4802,7 @@ def _strategy_card_view(strategy_code: str, lang: str) -> dict:
         }
     else:
         text = {
-            "name": "GRID DCA 2.9",
+            "name": "GRID DCA 2.10",
             "description": STRATEGIES[code].description,
             "simple": "Best for calmer markets, pullbacks, and wave-like price action. It opens a deal with safety orders to average the entry.",
             "profit": "Potential: moderate, focused on frequent smaller deals.",

@@ -101,6 +101,7 @@ UI = {
             "balance_help": "Используется API Cryptorg Bybit Liquidity: баланс, позиции и история читаются через ключ только для чтения.",
             "secret_required": "При смене ключа API нужно заново ввести секрет API из той же связки ключей.",
             "api_key_in_use": "Этот API ключ уже подключён к другому аккаунту Griders. Используйте другой ключ или обратитесь к администратору.",
+            "invalid_webhook": "В поле «Адрес вебхука» должен быть URL гоуст-бота Cryptorg (начинается с https://api3.cryptorg.net/crazy/hook/...). Похоже, вы вставили JSON-запрос или другой текст вместо адреса вебхука.",
             "webhook": "Адрес вебхука гоуст-бота Cryptorg",
             "webhook_help": "Через этот вебхук Griders запускает фьючерсного гоуст-бота в Cryptorg.",
             "api_valid": "API ключи верные. Баланс успешно обновлён.",
@@ -110,7 +111,7 @@ UI = {
         "strategies": {
             "eyebrow": "Алгоритмы",
             "title": "Стратегии",
-            "strategy_name": "GRID DCA 2.9",
+            "strategy_name": "GRID DCA 2.10",
             "strategy_description": "Стратегия определяет состояние рынка и открывает гоуст-бота Cryptorg с адаптивной сеткой усреднения, тейк-профитом по стадии рынка и расширенным стоп-лоссом.",
             "connection": "Подключение",
             "strategy_choice": "Стратегия для подключения",
@@ -250,6 +251,7 @@ UI = {
             "balance_help": "Uses the Cryptorg Bybit Liquidity API from working-example: balance, positions, and history are read with a read-only key.",
             "secret_required": "When changing the API key, enter the matching API secret again.",
             "api_key_in_use": "This API key is already connected to another Griders account. Use another key or contact the administrator.",
+            "invalid_webhook": "The \"Webhook URL\" field must be a Cryptorg Ghost Bot URL (starts with https://api3.cryptorg.net/crazy/hook/...). It looks like you pasted a JSON request or other text instead of the webhook URL.",
             "webhook": "Cryptorg Ghost Bot webhook URL",
             "webhook_help": "Griders uses this webhook to start the Cryptorg futures Ghost Bot.",
             "api_valid": "API keys are valid. Balance was updated successfully.",
@@ -259,7 +261,7 @@ UI = {
         "strategies": {
             "eyebrow": "Algorithms",
             "title": "Strategies",
-            "strategy_name": "GRID DCA 2.9",
+            "strategy_name": "GRID DCA 2.10",
             "strategy_description": "Market-stage strategy that opens Cryptorg Ghost Bot deals with an ATR-adaptive DCA grid, stage-dependent take profit and wider stop loss.",
             "connection": "Connection",
             "strategy_choice": "Connection strategy",

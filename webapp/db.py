@@ -135,6 +135,9 @@ def init_db() -> None:
             last_balance DECIMAL(18, 8) NULL,
             last_error TEXT NULL,
             last_checked_at TIMESTAMP NULL,
+            account_mismatch_streak INT NOT NULL DEFAULT 0,
+            account_mismatch_active TINYINT(1) NOT NULL DEFAULT 1,
+            account_mismatch_stopped_at TIMESTAMP NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             CONSTRAINT fk_ai_connections_user FOREIGN KEY (user_id) REFERENCES ai_users(id) ON DELETE CASCADE
@@ -536,6 +539,9 @@ def init_db() -> None:
             _ensure_column(cur, "ai_user_connections", "last_risk_pause_reason", "TEXT NULL")
             _ensure_column(cur, "ai_user_connections", "last_risk_pause_snapshot", "JSON NULL")
             _ensure_column(cur, "ai_user_connections", "last_risk_pause_checked_at", "TIMESTAMP NULL")
+            _ensure_column(cur, "ai_user_connections", "account_mismatch_streak", "INT NOT NULL DEFAULT 0")
+            _ensure_column(cur, "ai_user_connections", "account_mismatch_active", "TINYINT(1) NOT NULL DEFAULT 1")
+            _ensure_column(cur, "ai_user_connections", "account_mismatch_stopped_at", "TIMESTAMP NULL")
             _ensure_column(cur, "ai_site_trade_deals", "active_safety_orders", "INT NOT NULL DEFAULT 0")
             cur.execute("ALTER TABLE ai_site_trade_deals MODIFY status ENUM('open','closed','canceled') NOT NULL DEFAULT 'open'")
             _ensure_column(cur, "ai_site_trade_deals", "closed_pnl", "DECIMAL(24, 8) NULL")

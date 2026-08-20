@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.strategies.title }} · {{ app_name }}{% endblock %}
-{% block meta_description %}{% if lang == "ru" %}Настройки стратегий Griders: GRID DCA, лимиты сделок, первый ордер, риск, торговые пары и отчёт бэктеста стратегии 2.9.{% else %}Configure Griders strategies: GRID DCA, deal limits, first order size, risk, trading pairs, and the GRID DCA 2.9 backtest report.{% endif %}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Настройки стратегий Griders: GRID DCA, лимиты сделок, первый ордер, риск, торговые пары и отчёт бэктеста стратегии 2.10.{% else %}Configure Griders strategies: GRID DCA, deal limits, first order size, risk, trading pairs, and the GRID DCA 2.10 backtest report.{% endif %}{% endblock %}
 {% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
 {% block content %}
 <section class="page-head">
@@ -56,8 +56,8 @@
         <p class="muted">{{ strategy_meta.description }}</p>
         {% if strategy_meta.code == "grid_dca_v2" %}
           <div class="strategy-report-links">
-            <a class="report-link" href="/static/reports/grid-dca-29-realistic-live-calibrated.html" target="_blank" rel="noopener">
-              {{ "Реалистичный бэктест GRID DCA 2.9 по всем тарифам с калибровкой по реальной истории" if lang == "ru" else "Realistic GRID DCA 2.9 backtest for all plans calibrated by live history" }}
+            <a class="report-link" href="/static/reports/grid-dca-210-comparison.html" target="_blank" rel="noopener">
+              {{ "Сравнение реальности, стратегии 2.9 и 2.10" if lang == "ru" else "Comparison of reality, strategy 2.9 and 2.10" }}
             </a>
           </div>
         {% endif %}
@@ -105,7 +105,7 @@
       data-summary-ok-template="{{ ui.strategies.calc_summary_ok }}"
       data-summary-no-balance-template="{{ ui.strategies.calc_summary_no_balance }}"
       data-manual-title="{{ 'Примерный расчёт объёма на 1 сделку' if lang == 'ru' else 'Estimated volume for one deal' }}"
-      data-deposit-title="{{ 'Расчёт первого ордера от депозита' if lang == 'ru' else 'First order calculated from deposit' }}"
+      data-deposit-title="{{ 'Примерный расчёт первого ордера от депозита' if lang == 'ru' else 'Estimated first order calculated from deposit' }}"
       data-manual-note="{{ 'При ручном вводе Griders берёт указанный первый ордер и рассчитывает примерную плановую маржу всей DCA-сетки.' if lang == 'ru' else 'In manual mode, Griders uses the entered first order and estimates the planned margin of the full DCA grid.' }}"
       data-deposit-note="{{ 'При расчёте от депозита Griders сам рассчитывает первый ордер из выбранного процента, депозита, плеча x10 и средней DCA-сетки. Первый ордер должен быть не меньше 6 USDT.' if lang == 'ru' else 'When calculated from deposit, Griders derives the first order from the selected percentage, deposit, x10 leverage, and the average DCA grid. The first order must be at least 6 USDT.' }}"
       data-deposit-summary-template="{{ 'При выбранном объёме {risk_pct}% от депозита первый ордер получается примерно {first_order} USDT. Плановая маржа сделки с учётом плеча x10 составит около {actual_pct}% депозита.' if lang == 'ru' else 'With {risk_pct}% of deposit selected, the first order is about {first_order} USDT. Planned deal margin with x10 leverage is about {actual_pct}% of the deposit.' }}"

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.nav.docs }} · {{ app_name }}{% endblock %}
-{% block meta_description %}{% if lang == "ru" %}Документация Griders: подключение Cryptorg, тарифы, GRID DCA 2.9, сигналы TradingView, мониторинг сделок Griders, паузы риска и безопасность аккаунта.{% else %}Griders documentation: Cryptorg connection, plans, GRID DCA 2.9, TradingView signals, Griders-only monitoring, risk pauses, and account security.{% endif %}{% endblock %}
+{% block meta_description %}{% if lang == "ru" %}Документация Griders: подключение Cryptorg, тарифы, GRID DCA 2.10, сигналы TradingView, мониторинг сделок Griders, паузы риска и безопасность аккаунта.{% else %}Griders documentation: Cryptorg connection, plans, GRID DCA 2.10, TradingView signals, Griders-only monitoring, risk pauses, and account security.{% endif %}{% endblock %}
 {% block content %}
 {% if lang == "en" %}
 <section class="page-head">
@@ -19,7 +19,7 @@
 
   <article class="panel doc-panel">
     <h2>Plans</h2>
-    <p>All public plans use GRID DCA 2.9. Higher plans expand simultaneous deal limits, first-order limits, available pairs, and volume calculation modes.</p>
+    <p>All public plans use GRID DCA 2.10. Higher plans expand simultaneous deal limits, first-order limits, available pairs, and volume calculation modes.</p>
     <p>Free: active for 14 days, recommended deposit from 50 USDT, limits 4 / 4 / 4, first order up to 6 USDT, manual first-order input, BTCUSDT, ETHUSDT, and SOLUSDT unavailable.</p>
     <p>Free Plus: no time limit, recommended deposit from 100 USDT, limits 6 / 6 / 6, first order up to 12 USDT, first order can be calculated from 1% to 10% of deposit. Requires registration through the Cryptorg referral link and connecting the new referred account to Griders.</p>
     <p>Start: recommended deposit from 500 USDT, limits 8 / 8 / 8, first order up to 60 USDT, BTCUSDT unavailable. Start is paid through Tribute: 10 USDT/month.</p>
@@ -56,14 +56,14 @@
       <li>If Cryptorg asks for an IP whitelist, add the Griders server IP.</li>
       <li>In Griders, open Connections, add the API key, API secret, webhook URL, and save.</li>
       <li>Click Test read-only API. A successful test updates the USDT balance.</li>
-      <li>Open Strategies, select the same connection, configure GRID DCA 2.9, and save.</li>
+      <li>Open Strategies, select the same connection, configure GRID DCA 2.10, and save.</li>
     </ol>
     <p>For accurate statistics, use a separate Cryptorg account for Griders trades. Manual Cryptorg trades on the same account can make external account history harder to interpret, although Griders monitoring now shows only confirmed Griders deals.</p>
   </article>
 
   <article class="panel doc-panel">
-    <h2>GRID DCA 2.9</h2>
-    <p>GRID DCA 2.9 receives TradingView alerts from the current Pine Script. The script evaluates market stage, ATR, volatility, volume, RSI on 15m and 1h, Bollinger position, BTC/ETH pressure, impulse candles, and global trend diagnostics.</p>
+    <h2>GRID DCA 2.10</h2>
+    <p>GRID DCA 2.10 receives TradingView alerts from the current Pine Script. The script evaluates market stage, ATR, volatility, volume, RSI on 15m and 1h, Bollinger position, BTC/ETH pressure, impulse candles, and global trend diagnostics.</p>
     <p>Griders additionally checks plan limits, selected pairs, active positions, repeated-pair protection, personal risk pauses, and system pair pauses before any webhook is sent to Cryptorg.</p>
     <p>When a launch is allowed, Griders sends a Ghost Bot payload with first order, DCA grid, take profit, stop loss, fixed x10 leverage, and one trading cycle. Take profit, grid step, and stop are calculated from the signal and GRID DCA presets.</p>
   </article>
@@ -119,7 +119,7 @@
 
   <article class="panel doc-panel">
     <h2>Тарифы</h2>
-    <p>Все пользовательские тарифы работают со стратегией GRID DCA 2.9. Старшие тарифы расширяют лимиты одновременных сделок, максимальный первый ордер, доступные пары и способы расчёта объёма.</p>
+    <p>Все пользовательские тарифы работают со стратегией GRID DCA 2.10. Старшие тарифы расширяют лимиты одновременных сделок, максимальный первый ордер, доступные пары и способы расчёта объёма.</p>
     <p>Бесплатный: действует 14 дней, рекомендуемый депозит от 50 USDT, лимиты 4 / 4 / 4, первый ордер до 6 USDT, ручной ввод первого ордера. Недоступны BTCUSDT, ETHUSDT и SOLUSDT.</p>
     <p>Бесплатный Плюс: без ограничения по времени, рекомендуемый депозит от 100 USDT, лимиты 6 / 6 / 6, первый ордер до 12 USDT, расчёт первого ордера от 1% до 10% депозита. Для подключения нужен новый аккаунт Cryptorg, зарегистрированный по реферальной ссылке и подключённый к Griders.</p>
     <p>Старт: рекомендуемый депозит от 500 USDT, лимиты 8 / 8 / 8, первый ордер до 60 USDT. Недоступна BTCUSDT. Оплата через Tribute: 10 USDT/мес.</p>
@@ -156,14 +156,14 @@
       <li>Если Cryptorg требует whitelist, добавьте IP сервера Griders.</li>
       <li>В Griders откройте Подключения, добавьте API ключ, API секрет, webhook и сохраните.</li>
       <li>Нажмите Проверить read-only API. При успешной проверке Griders обновит баланс в USDT.</li>
-      <li>Откройте Стратегии, выберите это же подключение, настройте GRID DCA 2.9 и сохраните.</li>
+      <li>Откройте Стратегии, выберите это же подключение, настройте GRID DCA 2.10 и сохраните.</li>
     </ol>
     <p>Для объективной статистики лучше выделить отдельный аккаунт Cryptorg только под сделки Griders. Ручные сделки в Cryptorg на том же аккаунте могут мешать разбору общей истории, хотя мониторинг Griders сейчас показывает только подтверждённые сделки Griders.</p>
   </article>
 
   <article class="panel doc-panel">
-    <h2>GRID DCA 2.9</h2>
-    <p>GRID DCA 2.9 получает сигналы TradingView из актуального Pine Script. Скрипт оценивает стадию рынка, ATR, волатильность, объём, RSI на 15м и 1ч, положение в Bollinger Bands, давление BTC/ETH, импульсные свечи и диагностику глобального тренда.</p>
+    <h2>GRID DCA 2.10</h2>
+    <p>GRID DCA 2.10 получает сигналы TradingView из актуального Pine Script. Скрипт оценивает стадию рынка, ATR, волатильность, объём, RSI на 15м и 1ч, положение в Bollinger Bands, давление BTC/ETH, импульсные свечи и диагностику глобального тренда.</p>
     <p>Перед отправкой webhook Griders дополнительно проверяет лимиты тарифа, выбранные пары, открытые позиции, защиту от повторного входа по той же паре, личные паузы риска и системные паузы по торговым парам.</p>
     <p>Если вход разрешён, Griders отправляет в Ghost Bot первый ордер, DCA-сетку, тейк-профит, стоп-лосс, фиксированное плечо x10 и один торговый цикл. Тейк, шаг сетки и стоп рассчитываются из сигнала и пресетов GRID DCA.</p>
   </article>

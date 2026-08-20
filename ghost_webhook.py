@@ -21,6 +21,43 @@ def normalize_webhook_url(url: str | None) -> str:
     return f"https://{value}"
 
 
+def is_valid_webhook_url(url: str | None) -> bool:
+    """Validate that a value looks like a webhook URL and not, say, a raw JSON
+    Ghost payload pasted by mistake into the webhook field.
+
+    A real Ghost webhook URL looks like:
+        https://api3.cryptorg.net/crazy/hook/<token>
+    The most common user error is pasting the whole JSON command ({"action":
+    "open", "params": {...}}) instead of the URL, which later surfaces as a
+    confusing "Invalid port" runtime error when httpx tries to parse it as a
+    URL. Catching it here yields a clear, actionable message at save time.
+    """
+    value = (url or "").strip()
+    if not value:
+        # An empty webhook is allowed (some users connect read-only first and
+        # add the webhook later). Emptiness is not a formatting error.
+        return True
+    # Reject anything that looks like a JSON document / payload rather than a URL.
+    if any(ch in value for ch in ("{", "}", '"')) or any(
+        token in value.lower() for token in ('"action"', '"params"', '"open"', '"dca"')
+    ):
+        return False
+    # Apply the same scheme normalization as normalize_webhook_url so that a
+    # host typed without https:// (e.g. "api3.cryptorg.net/crazy/hook/...")
+    # is accepted, exactly as before this validation was added.
+    normalized = normalize_webhook_url(value)
+    lowered = normalized.lower()
+    if not lowered.startswith(("http://", "https://")):
+        return False
+    rest = normalized.split("://", 1)[1]
+    # No whitespace inside the URL and the host must contain a dot.
+    if " " in rest or "\t" in rest or "\n" in rest:
+        return False
+    if "." not in rest.split("/", 1)[0]:
+        return False
+    return True
+
+
 def failure_message(result: dict | None) -> str | None:
     if not result or result.get("ok"):
         return None

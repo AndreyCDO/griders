@@ -16,7 +16,7 @@ class Strategy:
 STRATEGIES = {
     "grid_dca_v2": Strategy(
         code="grid_dca_v2",
-        name="GRID DCA 2.9",
+        name="GRID DCA 2.10",
         description="Market-stage GRID DCA strategy with RSI 15m/1h filters, ATR-adaptive averaging, BTC/ETH market guard, stage-dependent take profit, wider stop loss, and deal limits.",
     ),
 }

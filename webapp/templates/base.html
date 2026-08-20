@@ -31,7 +31,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/static/favicon/apple-touch-icon.png?v=20260601">
   <link rel="manifest" href="/site.webmanifest?v=20260601">
   <meta name="theme-color" content="#0b8f70" id="theme-color-meta">
-  <link rel="stylesheet" href="/static/app.css?v=20260716-free-plan-expiry">
+  <link rel="stylesheet" href="/static/app.css?v=20260807-grid-dca-210">
   <!-- Yandex.Metrika counter -->
   <script type="text/javascript">
       (function(m,e,t,r,i,k,a){
@@ -126,6 +126,18 @@
     </div>
   {% endif %}
 
+  {% if user and account_mismatch.active %}
+    <div class="admin-view-banner-wrap">
+      <div class="admin-view-banner account-mismatch-banner">
+        <div>
+          <strong>{{ "API ключ и адрес Webhook Ghost бота от разных суббаккаунтов Cryptorg" if lang == "ru" else "API key and Ghost bot webhook URL belong to different Cryptorg subaccounts" }}</strong>
+          <span>{{ "Сигналы уходят в Cryptorg, но сделки не открываются. Проверьте, что read-only API ключ и Ghost webhook принадлежат одному суббаккаунту, и поменяйте адрес вебхука в подключении." if lang == "ru" else "Signals are sent to Cryptorg, but no deals open. Make sure the read-only API key and the Ghost webhook belong to the same subaccount, then update the webhook URL in the connection." }}</span>
+        </div>
+        <a class="button danger" href="/connections">{{ "Открыть подключения" if lang == "ru" else "Open connections" }}</a>
+      </div>
+    </div>
+  {% endif %}
+
   <main class="shell">
     {% block content %}{% endblock %}
   </main>
@@ -171,7 +183,7 @@
       document.documentElement.dataset.freePlanExpired = "1";
       document.querySelectorAll("form").forEach(function (form) {
         var action = form.getAttribute("action") || "";
-        if (form.hasAttribute("data-free-plan-allow") || action === "/logout") {
+        if (form.hasAttribute("data-free-plan-allow") || form.hasAttribute("data-admin-view-allow") || action === "/logout") {
           return;
         }
         var method = (form.getAttribute("method") || "get").toLowerCase();
